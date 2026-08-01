@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [".opencode/AGENTS.md"],
+  "plugin": ["opencode-firecrawl"],
+  "permission": {
+    "skill": {
+      "caveman": "allow",
+      "caveman-commit": "allow",
+      "caveman-review": "allow",
+      "caveman-help": "allow",
+      "caveman-compress": "allow",
+      "customize-opencode": "allow",
+      "firecrawl": "allow"
+    }
+  }
+}
