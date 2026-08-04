@@ -68,6 +68,60 @@ export default function CRM() {
   const [dobDisplay, setDobDisplay] = useState('')
   const [saving, setSaving] = useState(false)
 
+  const [monthlyTxns, setMonthlyTxns] = useState([])
+  const currentMonthName = useMemo(() => new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }), [])
+
+  useEffect(() => {
+    if (!currentUser) return
+    const now = new Date()
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+    const q = query(
+      collection(db, 'users', currentUser.uid, 'transactions'),
+      where('createdAt', '>=', startOfMonth)
+    )
+    const unsub = onSnapshot(q, (snap) => {
+      setMonthlyTxns(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    }, (err) => {
+      console.error('Monthly txns query error:', err)
+    })
+    return () => unsub()
+  }, [currentUser])
+
+  const monthlySpendMap = useMemo(() => {
+    const map = {}
+    monthlyTxns.forEach((t) => {
+      const key = t.customerId || (t.phone || t.customerPhone || '').replace(/\D/g, '').slice(-10)
+      if (key) {
+        if (!map[key]) map[key] = { total: 0, count: 0 }
+        map[key].total += (Number(t.total) || 0)
+        map[key].count += 1
+      }
+    })
+    return map
+  }, [monthlyTxns])
+
+  const customerRanks = useMemo(() => {
+    const ranked = customers.map((c) => {
+      const phoneKey = (c.phone || '').replace(/\D/g, '').slice(-10)
+      const mData = monthlySpendMap[c.id] || monthlySpendMap[phoneKey] || { total: 0, count: 0 }
+      const mSpent = mData.total
+      const effectiveSpend = mSpent > 0 ? mSpent : (c.totalSpent || 0)
+      return {
+        id: c.id,
+        monthlySpent: mSpent,
+        effectiveSpend,
+      }
+    })
+    ranked.sort((a, b) => b.effectiveSpend - a.effectiveSpend)
+    const rankMap = {}
+    ranked.forEach((c, idx) => {
+      if (c.effectiveSpend > 0) {
+        rankMap[c.id] = idx + 1
+      }
+    })
+    return rankMap
+  }, [customers, monthlySpendMap])
+
   const filtered = useMemo(() => {
     let list = customers
     if (search) {
@@ -79,18 +133,28 @@ export default function CRM() {
       )
     }
     if (tagFilter) {
-      list = list.filter((c) => (c.tags || []).includes(tagFilter))
+      list = list.filter((c) => {
+        const rank = customerRanks[c.id]
+        const isReg = (c.tags || []).includes('Regular') || (rank && rank <= 5) || (c.totalOrders >= 3)
+        if (tagFilter === 'Regular') return isReg || (c.tags || []).includes('Regular')
+        if (tagFilter === 'VIP') return (rank && rank <= 3) || (c.tags || []).includes('VIP')
+        return (c.tags || []).includes(tagFilter)
+      })
     }
     return list
-  }, [customers, search, tagFilter])
+  }, [customers, search, tagFilter, customerRanks])
 
   const stats = useMemo(() => {
     const total = customers.length
     const totalSpent = customers.reduce((s, c) => s + (c.totalSpent || 0), 0)
-    const topSpender = [...customers].sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0))[0]
+    const topSpender = [...customers].sort((a, b) => {
+      const rA = customerRanks[a.id] || 999
+      const rB = customerRanks[b.id] || 999
+      return rA - rB
+    })[0]
     const birthdayCount = customers.filter((c) => c.dob && isTodayBirthday(c.dob)).length
     return { total, totalSpent, topSpender, birthdayCount }
-  }, [customers])
+  }, [customers, customerRanks])
 
   function openAddModal() {
     setEditingCustomer(null)
@@ -358,44 +422,92 @@ export default function CRM() {
           </div>
         ) : (
           <ScrollReveal animation="reveal" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map((c) => (
-              <div key={c.id} className="bg-white rounded-xl border border-gray-100 p-4 hover:border-gray-300 hover:shadow-md transition-all cursor-pointer" onClick={() => setSelectedCustomer(c)}>
-                <div className="flex items-start gap-3">
-                  <div className={`w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${isTodayBirthday(c.dob) ? 'bg-pink-100 text-pink-600' : 'bg-purple/10 text-purple'}`}>
-                    {(c.name || '?')[0].toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-bold text-secondary truncate">{c.name}</h4>
-                      {isTodayBirthday(c.dob) && <span className="px-1.5 py-0.5 bg-pink-100 text-pink-600 text-[10px] font-bold rounded-full whitespace-nowrap">Birthday!</span>}
+            {filtered.map((c) => {
+              const rank = customerRanks[c.id]
+              const isTop1 = rank === 1
+              const isTop2 = rank === 2
+              const isTop3 = rank === 3
+              const isRegular = (c.tags || []).includes('Regular') || (rank && rank <= 5) || (c.totalOrders >= 3)
+
+              const cardBg = isTop1
+                ? 'bg-gradient-to-br from-amber-500/10 via-amber-400/5 to-amber-500/15 border-2 border-amber-400/80 shadow-md shadow-amber-100/60 ring-1 ring-amber-400/20'
+                : isTop2
+                  ? 'bg-gradient-to-br from-slate-100/90 via-gray-50 to-slate-100/90 border-2 border-slate-300 shadow-2xs'
+                  : isTop3
+                    ? 'bg-gradient-to-br from-orange-50/70 via-amber-50/30 to-orange-50/70 border-2 border-amber-300/70'
+                    : 'bg-white border border-gray-100 hover:border-gray-300 hover:shadow-md'
+
+              return (
+                <div
+                  key={c.id}
+                  className={`rounded-2xl p-4 transition-all duration-200 cursor-pointer relative overflow-hidden ${cardBg}`}
+                  onClick={() => setSelectedCustomer(c)}
+                >
+                  {/* Top Spender Monthly Rank Badge */}
+                  {isTop1 && (
+                    <div className="absolute top-0 right-0 bg-gradient-to-l from-amber-500 to-amber-600 text-white text-[10px] font-extrabold px-3 py-1 rounded-bl-xl shadow-xs flex items-center gap-1">
+                      <span>👑</span> #1 Top Buyer ({currentMonthName})
                     </div>
-                    {c.phone && <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" />{c.phone}</p>}
-                    <p className="text-[11px] text-gray-400 flex items-center gap-1 mt-0.5">
-                      <Cake className="w-3 h-3" />
-                      {c.dob ? formatDob(c.dob) : 'No DOB'}
-                      {!isTodayBirthday(c.dob) && isBirthdayThisMonth(c.dob) && <span className="px-1 py-0.5 bg-pink-50 text-pink-500 text-[9px] font-bold rounded">This month</span>}
-                    </p>
-                    <div className="flex items-center gap-3 mt-2 text-[11px] text-gray-400">
-                      <span>{c.totalOrders || 0} orders</span>
-                      <span>{formatCurrency(c.totalSpent)}</span>
+                  )}
+                  {isTop2 && (
+                    <div className="absolute top-0 right-0 bg-slate-700 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-bl-xl flex items-center gap-1">
+                      <span>🥈</span> #2 Top Buyer
                     </div>
-                    {(c.tags || []).length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {c.tags.slice(0, 3).map((t) => (
-                          <span key={t} className="px-1.5 py-0.5 bg-purple/10 text-purple text-[10px] font-semibold rounded-full">{t}</span>
-                        ))}
-                        {c.tags.length > 3 && <span className="px-1.5 py-0.5 bg-gray-100 text-gray-400 text-[10px] rounded-full">+{c.tags.length - 3}</span>}
+                  )}
+                  {isTop3 && (
+                    <div className="absolute top-0 right-0 bg-amber-800 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-bl-xl flex items-center gap-1">
+                      <span>🥉</span> #3 Top Buyer
+                    </div>
+                  )}
+
+                  <div className="flex items-start gap-3 pt-1">
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 shadow-xs ${
+                      isTop1
+                        ? 'bg-amber-500 text-white ring-2 ring-amber-300'
+                        : isTodayBirthday(c.dob)
+                          ? 'bg-pink-100 text-pink-600'
+                          : 'bg-purple/10 text-purple'
+                    }`}>
+                      {(c.name || '?')[0].toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap pr-12">
+                        <h4 className="font-bold text-secondary truncate text-base">{c.name}</h4>
+                        {isRegular && (
+                          <span className="px-2 py-0.5 bg-amber-100/90 text-amber-900 border border-amber-300 text-[10px] font-extrabold rounded-full flex items-center gap-1 shadow-2xs">
+                            ⭐ Regular
+                          </span>
+                        )}
+                        {isTodayBirthday(c.dob) && <span className="px-1.5 py-0.5 bg-pink-100 text-pink-600 text-[10px] font-bold rounded-full whitespace-nowrap">Birthday!</span>}
                       </div>
-                    )}
+                      {c.phone && <p className="text-xs text-gray-500 flex items-center gap-1 mt-1 font-medium"><Phone className="w-3 h-3 text-gray-400" />{c.phone}</p>}
+                      <p className="text-[11px] text-gray-400 flex items-center gap-1 mt-0.5">
+                        <Cake className="w-3 h-3" />
+                        {c.dob ? formatDob(c.dob) : 'No DOB'}
+                        {!isTodayBirthday(c.dob) && isBirthdayThisMonth(c.dob) && <span className="px-1 py-0.5 bg-pink-50 text-pink-500 text-[9px] font-bold rounded">This month</span>}
+                      </p>
+                      <div className="flex items-center gap-3 mt-2 text-xs font-semibold text-gray-600">
+                        <span className="bg-white/80 border border-gray-200 px-2 py-0.5 rounded-md">{c.totalOrders || 0} orders</span>
+                        <span className="bg-green/10 text-green px-2 py-0.5 rounded-md font-bold">{formatCurrency(c.totalSpent)}</span>
+                      </div>
+                      {(c.tags || []).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {c.tags.slice(0, 3).map((t) => (
+                            <span key={t} className="px-1.5 py-0.5 bg-purple/10 text-purple text-[10px] font-semibold rounded-full">{t}</span>
+                          ))}
+                          {c.tags.length > 3 && <span className="px-1.5 py-0.5 bg-gray-100 text-gray-400 text-[10px] rounded-full">+{c.tags.length - 3}</span>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => openEditModal(c)} className="p-1.5 text-gray-300 hover:text-blue hover:bg-blue/5 rounded-lg transition-colors"><Edit3 className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => handleDelete(c)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-300 flex-shrink-0 mt-1" />
                   </div>
-                  <div className="flex flex-col gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <button onClick={() => openEditModal(c)} className="p-1.5 text-gray-300 hover:text-blue hover:bg-blue/5 rounded-lg transition-colors"><Edit3 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => handleDelete(c)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300 flex-shrink-0 mt-1" />
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </ScrollReveal>
         )}
       </div>

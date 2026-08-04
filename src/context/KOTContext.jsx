@@ -71,6 +71,7 @@ export function KOTProvider({ children }) {
   const [qrPayments, setQrPayments] = useState([])
   const prevKotsRef = useRef([])
   const initialLoadDone = useRef(false)
+  const notifiedPaymentsRef = useRef(new Set())
 
   // Subscribe to active KOTs only (pending + preparing)
   useEffect(() => {
@@ -83,7 +84,15 @@ export function KOTProvider({ children }) {
       const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
       const prev = prevKotsRef.current
       const isInitial = !initialLoadDone.current
-      if (isInitial) initialLoadDone.current = true
+      if (isInitial) {
+        initialLoadDone.current = true
+        // Mark existing paid items on initial load as already notified so they don't pop up
+        items.forEach((k) => {
+          if (k.paid || k.paymentStatus === 'paid') {
+            notifiedPaymentsRef.current.add(k.id)
+          }
+        })
+      }
 
       items.forEach((kot) => {
         const old = prev.find((p) => p.id === kot.id)
@@ -94,15 +103,26 @@ export function KOTProvider({ children }) {
           playReadySound()
           setReadyAlerts((a) => [...a, { id: kot.id, table: kot.table, time: Date.now() }])
         }
-        if (!isInitial && !old && kot.source === 'qr-order' && kot.payment === 'UPI (QR)') {
+        const wasPaid = old ? Boolean(old.paid || old.paymentStatus === 'paid') : false
+        const isNowPaid = Boolean(kot.paid || kot.paymentStatus === 'paid')
+        if (!isInitial && !wasPaid && isNowPaid && !notifiedPaymentsRef.current.has(kot.id)) {
+          notifiedPaymentsRef.current.add(kot.id)
           playPaymentSound()
-          setQrPayments((a) => [...a, {
-            id: kot.id,
-            table: kot.table,
-            total: kot.total,
-            customerName: kot.customerName || 'Guest',
-            time: Date.now(),
-          }])
+          setQrPayments((a) => [
+            {
+              id: kot.id,
+              table: kot.table,
+              total: kot.total,
+              payment: kot.payment || 'UPI',
+              customerName: kot.customerName || 'Guest',
+              time: Date.now(),
+            },
+            ...a.filter((p) => p.id !== kot.id),
+          ])
+          // Auto-dismiss notification toast after 4 seconds
+          setTimeout(() => {
+            setQrPayments((a) => a.filter((p) => p.id !== kot.id))
+          }, 4000)
         }
       })
 

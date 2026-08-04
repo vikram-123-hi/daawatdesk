@@ -10,9 +10,10 @@ import {
   Printer, Search, Grid3X3, ShoppingBag, Users, X, Check, ChevronDown,
   Utensils, Coffee, IceCream, Pizza, Cake, LogOut, User, ChefHat, Receipt,
   Settings, GripVertical, Edit3, Save, Package, TableProperties, Tag, Key, History, Download, Calendar, ChevronLeft, ChevronRight, Phone,
-  Camera, Loader2, Sparkles, Image, Zap, ScanLine, MapPin, Globe
+  Camera, Loader2, Sparkles, Image, Zap, ScanLine, MapPin, Globe, Info
 } from 'lucide-react'
 import { vibrate } from '../utils/haptics'
+import ItemDetailModal from './ItemDetailModal'
 
 function toLocalDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -231,6 +232,7 @@ export default function Billing() {
   const [vegFilter, setVegFilter] = useState('all')
   const [orderItems, setOrderItems] = useState([])
   const [selectedTable, setSelectedTable] = useState(null)
+  const [selectedDetailItem, setSelectedDetailItem] = useState(null)
   const [discount, setDiscount] = useState({ type: 'percent', value: 0 })
   const [showDiscount, setShowDiscount] = useState(false)
   const [showPayment, setShowPayment] = useState(false)
@@ -285,6 +287,7 @@ export default function Billing() {
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { month: d.getMonth(), year: d.getFullYear() } })
   const [historyTxns, setHistoryTxns] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [expandedTxnId, setExpandedTxnId] = useState(null)
   const [showKitchenClear, setShowKitchenClear] = useState(false)
   const [showProfileDrop, setShowProfileDrop] = useState(false)
   const [showWaiterDrop, setShowWaiterDrop] = useState(false)
@@ -424,7 +427,7 @@ export default function Billing() {
   }, [currentUser])
 
   const allPendingKots = (kots || []).filter(
-    (k) => k.status === 'pending' || k.status === 'preparing' || k.status === 'ready'
+    (k) => (k.status === 'pending' || k.status === 'preparing' || k.status === 'ready') && !k.paid && k.paymentStatus !== 'paid'
   )
 
   const activeKots = allPendingKots.filter(
@@ -440,8 +443,11 @@ export default function Billing() {
   function getOccupiedTableIds() {
     const ids = new Set()
     allPendingKots.forEach(k => {
-      const match = k.table?.match(/Table\s*(\d+)/)
-      if (match) ids.add(Number(match[1]))
+      const isPaid = k.paid || k.paymentStatus === 'paid' || k.status === 'completed'
+      if (!isPaid) {
+        const match = k.table?.match(/Table\s*(\d+)/)
+        if (match) ids.add(Number(match[1]))
+      }
     })
     Object.keys(tableAssignments).forEach(id => {
       ids.add(Number(id))
@@ -487,7 +493,25 @@ export default function Billing() {
     return () => clearInterval(interval)
   }, [allPendingKots])
 
+  // Real-time payment status sync for loaded/active KOTs in Billing POS
+  useEffect(() => {
+    if (loadedKotIds.length === 0) return
+    const loadedKot = (kots || []).find((k) => loadedKotIds.includes(k.id))
+    if (loadedKot) {
+      if (loadedKot.paid || loadedKot.paymentStatus === 'paid') {
+        setPaymentConfirmed(true)
+        setPaymentMethod((loadedKot.payment || 'upi').toLowerCase())
+      }
+    }
+  }, [kots, loadedKotIds])
+
   const loadKOT = (kot) => {
+    if (kot.table) {
+      const match = kot.table.match(/\d+/)
+      if (match) {
+        setSelectedTable(Number(match[0]))
+      }
+    }
     setOrderItems((prev) => {
       const merged = [...prev]
       kot.items.forEach((item) => {
@@ -497,8 +521,15 @@ export default function Billing() {
       })
       return merged
     })
-    setLoadedKotIds((prev) => prev.includes(kot.id) ? prev : [...prev, kot.id])
+    setLoadedKotIds((prev) => (prev.includes(kot.id) ? prev : [...prev, kot.id]))
     setKotNotes(kot.notes || '')
+    if (kot.paid || kot.paymentStatus === 'paid') {
+      setPaymentConfirmed(true)
+      setPaymentMethod((kot.payment || 'upi').toLowerCase())
+    } else {
+      setPaymentConfirmed(false)
+      setPaymentMethod('')
+    }
     if (kot.customerName || kot.customerPhone) {
       const phone = (kot.customerPhone || '').replace(/\D/g, '').slice(-10)
       setCustomerPhone(phone)
@@ -774,7 +805,9 @@ Rules:
   const subtotal = orderItems.reduce((sum, item) => sum + item.price * item.qty, 0)
   const discountAmount =
     discount.type === 'percent' ? (subtotal * discount.value) / 100 : discount.value
-  const gst = ((subtotal - discountAmount) * 18) / 100
+  const cgst = ((subtotal - discountAmount) * 2.5) / 100
+  const sgst = ((subtotal - discountAmount) * 2.5) / 100
+  const gst = cgst + sgst
   const total = subtotal - discountAmount + gst
 
   const toggleMergeTable = (tableId) => {
@@ -1125,15 +1158,9 @@ Rules:
 
   const generateBill = () => {
     if (orderItems.length === 0 || !paymentConfirmed || billingInProgress.current) return
-    if (activeCustomer) {
-      billingInProgress.current = true
-      const cleaned = customerPhone.replace(/\D/g, '').slice(-10)
-      doGenerateBill(activeCustomer.id, cleaned)
-    } else if (customerPhone.replace(/\D/g, '').length >= 10) {
-      openCustModal()
-    } else {
-      openCustModal()
-    }
+    billingInProgress.current = true
+    const cleaned = customerPhone.replace(/\D/g, '').slice(-10)
+    doGenerateBill(activeCustomer?.id || null, cleaned)
   }
 
   const clearAllReady = async () => {
@@ -1323,8 +1350,12 @@ Rules:
           </div>
           ${discountRow}
           <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;">
-            <span>GST (18%)</span>
-            <span>₹${gst.toFixed(2)}</span>
+            <span>CGST (2.5%)</span>
+            <span>₹${cgst.toFixed(2)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;">
+            <span>SGST (2.5%)</span>
+            <span>₹${sgst.toFixed(2)}</span>
           </div>
           <div class="total" style="display:flex;justify-content:space-between;">
             <span>TOTAL</span>
@@ -1820,6 +1851,27 @@ Rules:
             </div>
           </div>
         ))}
+        {qrPayments.map((payment) => (
+          <div
+            key={payment.id}
+            onClick={() => dismissQrPayment(payment.id)}
+            className="pointer-events-auto bg-gradient-to-r from-emerald-600 to-teal-700 text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-3 cursor-pointer animate-slide-in-right border border-emerald-400/40"
+          >
+            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl shrink-0">
+              💳
+            </div>
+            <div>
+              <p className="font-extrabold text-sm flex items-center gap-1.5">
+                <span>Payment Received!</span>
+                <span className="bg-white/20 text-[10px] px-2 py-0.5 rounded-md font-bold uppercase">{payment.payment || 'UPI'}</span>
+              </p>
+              <p className="text-xs opacity-95 mt-0.5">
+                <strong className="font-bold">{payment.table}</strong> paid <strong className="font-bold">₹{payment.total}</strong> ({payment.customerName})
+              </p>
+            </div>
+            <button className="text-white/60 hover:text-white p-1 text-xs font-bold">✕</button>
+          </div>
+        ))}
       </div>
 
       {orderComplete && (
@@ -1938,23 +1990,85 @@ Rules:
                 <p className="text-center text-gray-400 py-10">No transactions on this date</p>
               ) : (
                 <div className="space-y-2">
-                  {historyTxns.map((t) => (
-                    <div key={t.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center text-xs font-bold text-primary">
-                          {new Date(t.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                  {historyTxns.map((t) => {
+                    const isExpanded = expandedTxnId === t.id
+                    const subtotal = t.subtotal || t.items.reduce((s, i) => s + i.price * i.qty, 0)
+                    const gst = t.gst || Number((subtotal * 0.05).toFixed(2))
+                    return (
+                      <div key={t.id} className={`rounded-xl overflow-hidden transition-all duration-200 ${isExpanded ? 'bg-white border border-primary/20 shadow-md' : 'bg-gray-50 hover:bg-gray-100 cursor-pointer'}`}>
+                        <div
+                          className="flex items-center justify-between p-3 cursor-pointer"
+                          onClick={() => setExpandedTxnId(isExpanded ? null : t.id)}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center text-xs font-bold text-primary">
+                              {new Date(t.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                            <div>
+                              <p className="text-sm font-semibold text-secondary">{t.table}</p>
+                              {!isExpanded && (
+                                <p className="text-xs text-gray-400 max-w-[200px] truncate">{t.items.map((i) => `${i.name}x${i.qty}`).join(', ')}</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-secondary">₹{t.total?.toFixed(2)}</p>
+                              <p className="text-[10px] text-gray-400">{t.payment}</p>
+                            </div>
+                            <svg className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm font-semibold text-secondary">{t.table}</p>
-                          <p className="text-xs text-gray-400">{t.items.map((i) => `${i.name}x${i.qty}`).join(', ')}</p>
-                        </div>
+                        {isExpanded && (
+                          <div className="px-4 pb-4 animate-fade-up">
+                            <div className="border-t border-gray-100 pt-3 space-y-1.5">
+                              {t.items.map((item, idx) => (
+                                <div key={idx} className="flex items-center justify-between text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`w-2.5 h-2.5 rounded-sm border flex-shrink-0 ${item.veg !== false ? 'border-green' : 'border-red-500'}`}>
+                                      <span className={`block w-1 h-1 mx-auto mt-[1px] ${item.veg !== false ? 'bg-green rounded-full' : 'bg-red-500'}`} style={item.veg === false ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></span>
+                                    </span>
+                                    <span className="text-gray-700">{item.name}</span>
+                                    <span className="text-gray-400 text-xs">×{item.qty}</span>
+                                  </div>
+                                  <span className="font-semibold text-gray-700">₹{(item.price * item.qty).toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="border-t border-dashed border-gray-200 mt-3 pt-2.5 space-y-1">
+                              <div className="flex justify-between text-xs text-gray-500">
+                                <span>Subtotal</span>
+                                <span>₹{subtotal.toFixed(2)}</span>
+                              </div>
+                              <div className="flex justify-between text-xs text-gray-500">
+                                <span>CGST (2.5%)</span>
+                                <span>₹{(gst / 2).toFixed(2)}</span>
+                              </div>
+                              <div className="flex justify-between text-xs text-gray-500">
+                                <span>SGST (2.5%)</span>
+                                <span>₹{(gst / 2).toFixed(2)}</span>
+                              </div>
+                              {t.discount > 0 && (
+                                <div className="flex justify-between text-xs text-green">
+                                  <span>Discount</span>
+                                  <span>-₹{t.discount.toFixed(2)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between text-sm font-bold text-secondary pt-1 border-t border-gray-100">
+                                <span>Total</span>
+                                <span>₹{t.total?.toFixed(2)}</span>
+                              </div>
+                            </div>
+                            {(t.customerName || t.customerId) && (
+                              <div className="mt-2.5 flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-1.5">
+                                <span className="text-[10px] font-semibold text-blue-600">👤 {t.customerName || 'Guest'}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-secondary">₹{t.total?.toFixed(2)}</p>
-                        <p className="text-[10px] text-gray-400">{t.payment}</p>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -1991,11 +2105,14 @@ Rules:
               const tableTotal = kots.reduce((s, k) => s + k.items.reduce((s2, i) => s2 + i.price * i.qty, 0), 0)
               const statusOrder = { pending: 0, preparing: 1, ready: 2 }
               const worstKot = kots.reduce((w, k) => statusOrder[k.status] > statusOrder[w.status] ? k : w, kots[0])
-              const statusStyles = worstKot.status === 'pending'
-                ? { dot: 'bg-yellow-400 shadow-yellow-400/50', border: 'border-yellow-400/30 hover:border-yellow-400/60', badge: 'bg-yellow-400/20 text-yellow-300', label: 'Pending' }
-                : worstKot.status === 'preparing'
-                  ? { dot: 'bg-blue shadow-blue/50', border: 'border-blue/30 hover:border-blue/60', badge: 'bg-blue/20 text-blue', label: 'Cooking' }
-                  : { dot: 'bg-green shadow-green/50', border: 'border-green/30 hover:border-green/60', badge: 'bg-green/20 text-green', label: 'Ready' }
+              const isPaid = kots.some((k) => k.paid || k.paymentStatus === 'paid')
+              const statusStyles = isPaid
+                ? { dot: 'bg-emerald-400 shadow-emerald-400/50 animate-pulse', border: 'border-emerald-400/40 hover:border-emerald-400/80', badge: 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/40', label: worstKot.status === 'ready' ? 'Ready · PAID 🟢' : `${worstKot.status === 'pending' ? 'Pending' : 'Cooking'} · PAID 🟢` }
+                : worstKot.status === 'pending'
+                  ? { dot: 'bg-yellow-400 shadow-yellow-400/50', border: 'border-yellow-400/30 hover:border-yellow-400/60', badge: 'bg-yellow-400/20 text-yellow-300', label: 'Pending' }
+                  : worstKot.status === 'preparing'
+                    ? { dot: 'bg-blue shadow-blue/50', border: 'border-blue/30 hover:border-blue/60', badge: 'bg-blue/20 text-blue', label: 'Cooking' }
+                    : { dot: 'bg-green shadow-green/50', border: 'border-green/30 hover:border-green/60', badge: 'bg-green/20 text-green', label: 'Ready' }
               const earliestKot = kots.reduce((e, k) => new Date(k.createdAt) < new Date(e.createdAt) ? k : e, kots[0])
               const elapsed = getElapsed(earliestKot.createdAt)
               return (
@@ -2032,6 +2149,14 @@ Rules:
                     })
                     const allNotes = kots.map((k) => k.notes).filter(Boolean).join('; ')
                     setKotNotes(allNotes)
+                    if (isPaid) {
+                      const paidKot = kots.find((k) => k.paid || k.paymentStatus === 'paid')
+                      setPaymentConfirmed(true)
+                      setPaymentMethod((paidKot?.payment || 'upi').toLowerCase())
+                    } else {
+                      setPaymentConfirmed(false)
+                      setPaymentMethod('')
+                    }
                     freshOrder.current = false
                     setShowCart(true)
                   }}
@@ -2159,10 +2284,18 @@ Rules:
                         {inOrder.qty}
                       </span>
                     )}
-                    <div className="flex items-center gap-1 mb-2">
+                    <div className="flex items-center justify-between gap-1 mb-2">
                       <div className={`w-3 h-3 rounded-sm border-2 ${item.veg ? 'border-green' : 'border-red-500'}`}>
                         <div className={`w-1.5 h-1.5 mx-auto mt-0.5 ${item.veg ? 'bg-green rounded-full' : 'bg-red-500'}`} style={!item.veg ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setSelectedDetailItem(item) }}
+                        className="p-1 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors"
+                        title="View Details & Ingredients"
+                      >
+                        <Info className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                     <p className="font-semibold text-sm text-secondary mb-1 leading-tight">{item.name}</p>
                     <p className="text-primary font-bold">₹{item.price}</p>
@@ -2350,8 +2483,12 @@ Rules:
                     </div>
                   )}
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">GST (18%)</span>
-                    <span className="font-medium">₹{gst.toFixed(2)}</span>
+                    <span className="text-gray-500">CGST (2.5%)</span>
+                    <span className="font-medium">₹{cgst.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500">SGST (2.5%)</span>
+                    <span className="font-medium">₹{sgst.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-300">
                     <span>Total</span>
@@ -2955,7 +3092,8 @@ Rules:
           {discountAmount > 0 && (
             <div className="flex justify-between text-green"><span>Discount</span><span>-₹{discountAmount.toFixed(2)}</span></div>
           )}
-          <div className="flex justify-between"><span>GST (18%)</span><span>₹{gst.toFixed(2)}</span></div>
+          <div className="flex justify-between"><span>CGST (2.5%)</span><span>₹{cgst.toFixed(2)}</span></div>
+          <div className="flex justify-between"><span>SGST (2.5%)</span><span>₹{sgst.toFixed(2)}</span></div>
           <div className="border-t border-gray-400 my-2"></div>
           <div className="flex justify-between font-bold text-lg"><span>TOTAL</span><span>₹{total.toFixed(2)}</span></div>
           <div className="border-t border-dashed border-gray-400 my-2"></div>
@@ -4097,6 +4235,11 @@ Rules:
           </div>
         )
       })()}
+      <ItemDetailModal
+        item={selectedDetailItem}
+        onClose={() => setSelectedDetailItem(null)}
+        onAddToCart={(item) => addItem(item)}
+      />
       </div>
     </div>
   )

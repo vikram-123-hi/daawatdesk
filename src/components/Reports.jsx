@@ -233,14 +233,21 @@ export default function Reports() {
   const [calOpen, setCalOpen] = useState(null)
   const [calMonth, setCalMonth] = useState(() => new Date())
 
+  const [allExpenses, setAllExpenses] = useState([])
+
   useEffect(() => {
     if (!activeUid) { setLoading(false); return }
-    const unsub = onSnapshot(
+    const unsubTxns = onSnapshot(
       query(collection(db, 'users', activeUid, 'transactions'), orderBy('createdAt', 'desc')),
       (snap) => { setAllTxns(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false) },
       () => setLoading(false)
     )
-    return () => unsub()
+    const unsubExp = onSnapshot(
+      query(collection(db, 'users', activeUid, 'expenses'), orderBy('date', 'desc')),
+      (snap) => { setAllExpenses(snap.docs.map((d) => ({ id: d.id, ...d.data() }))) },
+      () => {}
+    )
+    return () => { unsubTxns(); unsubExp() }
   }, [activeUid])
 
   const { start, end } = useMemo(() => getDateRange(range, customFrom, customTo), [range, customFrom, customTo])
@@ -335,15 +342,31 @@ export default function Reports() {
     }
   }, [inventoryMovements, inventoryCostMap, stats.revenue, stats.gst])
 
+  const filteredExpenses = useMemo(() => {
+    return allExpenses.filter((e) => {
+      if (!e.date) return false
+      const d = new Date(e.date + 'T00:00:00')
+      if (isNaN(d.getTime())) return false
+      return d >= start && d < end
+    })
+  }, [allExpenses, start, end])
+
+  const operationalExpensesTotal = useMemo(() => {
+    return filteredExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0)
+  }, [filteredExpenses])
+
   const profitData = useMemo(() => {
-    if (txns.length === 0) return { cogs: 0, grossProfit: 0, cogsPercent: 0, grossMargin: 0, netRevenue: 0 }
+    if (txns.length === 0 && operationalExpensesTotal === 0) {
+      return { cogs: 0, grossProfit: 0, operationalExpenses: 0, netProfit: 0, cogsPercent: 0, grossMargin: 0, netRevenue: 0 }
+    }
     const cogs = inventoryStats.usageCost + inventoryStats.wastageCost
     const netRevenue = stats.revenue - stats.gst
     const grossProfit = netRevenue - cogs
+    const netProfit = grossProfit - operationalExpensesTotal
     const cogsPercent = netRevenue > 0 ? (cogs / netRevenue) * 100 : 0
     const grossMargin = netRevenue > 0 ? ((grossProfit / netRevenue) * 100) : 0
-    return { cogs, grossProfit, cogsPercent, grossMargin, netRevenue }
-  }, [inventoryStats, stats.revenue, stats.gst])
+    return { cogs, grossProfit, operationalExpenses: operationalExpensesTotal, netProfit, cogsPercent, grossMargin, netRevenue }
+  }, [inventoryStats, stats.revenue, stats.gst, operationalExpensesTotal, txns.length])
 
   const orderTypeData = useMemo(() => {
     const map = { 'Dine-in': { name: 'Dine-in', count: 0, revenue: 0 }, 'Parcel': { name: 'Parcel', count: 0, revenue: 0 } }
