@@ -16,7 +16,7 @@ function toHex(num, length) {
 
 export function generateKey(email, version = 1) {
   const normalized = email.trim().toLowerCase();
-  
+
   if (version === 1) {
     const hash1 = hashCode(normalized + SECRET_SEED);
     const hash2 = hashCode(SECRET_SEED + normalized + 'v2');

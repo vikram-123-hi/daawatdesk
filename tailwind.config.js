@@ -36,8 +36,9 @@ export default {
         },
       },
       fontFamily: {
-        heading: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        body: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        heading: ['Outfit', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        body: ['Outfit', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['Playfair Display', 'Georgia', 'serif'],
       },
       animation: {
         'float': 'float 6s ease-in-out infinite',

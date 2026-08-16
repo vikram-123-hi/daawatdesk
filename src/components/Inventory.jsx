@@ -135,17 +135,40 @@ export default function Inventory() {
     purple: 'bg-purple-100 text-purple-700',
   }
 
+  const catColorHex = {
+    green: '#10B981',
+    red: '#EF4444',
+    yellow: '#EAB308',
+    orange: '#FF6B00',
+    amber: '#F59E0B',
+    blue: '#3B82F6',
+    gray: '#6B7280',
+    teal: '#14B8A6',
+    purple: '#8B5CF6',
+  }
+
+  const hexToRgba = (hex, a) => {
+    const n = parseInt(hex.slice(1), 16)
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+  }
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-orange-50/40 flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
-      <header className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-50">
+    <div className="relative min-h-screen bg-gradient-to-br from-gray-50 via-white to-orange-50/40 flex flex-col">
+      <div className="pointer-events-none fixed inset-0 overflow-hidden z-0" aria-hidden="true">
+        <div className="ambient-blob animate-blob w-96 h-96 bg-orange/20 -left-24 top-[8%]"></div>
+        <div className="ambient-blob animate-blob w-80 h-80 bg-blue/10 -right-20 top-[32%]" style={{ animationDelay: '-6s' }}></div>
+        <div className="ambient-blob animate-blob w-72 h-72 bg-green/10 left-[32%] -bottom-24" style={{ animationDelay: '-11s' }}></div>
+        <div className="noise-overlay"></div>
+      </div>
+      <header className="glass-header px-4 py-3 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button onClick={() => navigate('/dashboard')} className="flex items-center gap-1.5 text-gray-500 hover:text-primary transition-all duration-200 active:scale-90 group">
@@ -158,10 +181,10 @@ export default function Inventory() {
           </div>
           {canWrite && (
             <div className="flex gap-2">
-              <button onClick={() => setShowScanner(true)} className="flex items-center gap-1.5 bg-orange/10 text-orange px-3 py-2 rounded-lg text-sm font-medium hover:bg-orange/20 transition-colors">
+              <button onClick={() => setShowScanner(true)} className="flex items-center gap-1.5 bg-orange/10 text-orange px-3 py-2 rounded-lg text-sm font-medium hover:bg-orange/20 hover:-translate-y-0.5 active:scale-95 transition-all">
                 <ScanBarcode className="w-4 h-4" /> <span className="hidden sm:inline">Scan</span>
               </button>
-              <button onClick={openAdd} className="flex items-center gap-1.5 bg-primary text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors">
+              <button onClick={openAdd} className="flex items-center gap-1.5 bg-primary text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 hover:-translate-y-0.5 active:scale-95 transition-all">
                 <Plus className="w-4 h-4" /> Add Item
               </button>
             </div>
@@ -169,45 +192,31 @@ export default function Inventory() {
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex-1">
+      <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 flex-1">
         {/* Summary Cards */}
-        <ScrollReveal animation="reveal" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-          <div className="bg-white rounded-xl p-4 border border-gray-100">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center"><Package className="w-4 h-4 text-primary" /></div>
-              <span className="text-xs font-semibold text-gray-400 uppercase">Total Items</span>
-            </div>
-            <p className="text-2xl font-bold text-secondary">{items.length}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-gray-100">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center"><AlertTriangle className="w-4 h-4 text-red-500" /></div>
-              <span className="text-xs font-semibold text-gray-400 uppercase">Low Stock</span>
-            </div>
-            <p className="text-2xl font-bold text-red-500">{lowStockItems.length}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-gray-100">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center"><AlertCircle className="w-4 h-4 text-red-500" /></div>
-              <span className="text-xs font-semibold text-gray-400 uppercase">Expired</span>
-            </div>
-            <p className="text-2xl font-bold text-red-500">{expiredItems.length}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-gray-100">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 bg-orange/10 rounded-lg flex items-center justify-center"><Timer className="w-4 h-4 text-orange" /></div>
-              <span className="text-xs font-semibold text-gray-400 uppercase">Expiring</span>
-            </div>
-            <p className="text-2xl font-bold text-orange">{expiringItems.length - expiredItems.length}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-gray-100">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 bg-green/10 rounded-lg flex items-center justify-center"><DollarSign className="w-4 h-4 text-green" /></div>
-              <span className="text-xs font-semibold text-gray-400 uppercase">Stock Value</span>
-            </div>
-            <p className="text-2xl font-bold text-secondary">₹{totalValue.toLocaleString('en-IN')}</p>
-          </div>
-        </ScrollReveal>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+          {[
+            { icon: Package, tint: 'bg-primary/10', iconColor: 'text-primary', label: 'Total Items', value: String(items.length) },
+            { icon: AlertTriangle, tint: 'bg-red-50', iconColor: 'text-red-500', label: 'Low Stock', value: String(lowStockItems.length), valueColor: 'text-red-500' },
+            { icon: AlertCircle, tint: 'bg-red-50', iconColor: 'text-red-500', label: 'Expired', value: String(expiredItems.length), valueColor: 'text-red-500' },
+            { icon: Timer, tint: 'bg-orange/10', iconColor: 'text-orange', label: 'Expiring', value: String(expiringItems.length - expiredItems.length), valueColor: 'text-orange' },
+            { icon: DollarSign, tint: 'bg-green/10', iconColor: 'text-green', label: 'Stock Value', value: `₹${totalValue.toLocaleString('en-IN')}` },
+          ].map((s, i) => {
+            const Icon = s.icon
+            return (
+              <ScrollReveal key={s.label} animation="reveal" delay={i * 70} className="h-full">
+                <div className="glass-card glass-card-hover group h-full rounded-2xl p-4">
+                  <span className="shine-layer" aria-hidden="true" />
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className={`w-8 h-8 ${s.tint} rounded-lg flex items-center justify-center`}><Icon className={`w-4 h-4 ${s.iconColor}`} /></div>
+                    <span className="text-xs font-semibold text-gray-400 uppercase">{s.label}</span>
+                  </div>
+                  <p className={`text-2xl font-bold ${s.valueColor || 'text-secondary'}`}>{s.value}</p>
+                </div>
+              </ScrollReveal>
+            )
+          })}
+        </div>
 
         {/* Low Stock Alert Banner */}
         {lowStockItems.length > 0 && (
@@ -261,15 +270,15 @@ export default function Inventory() {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-4 bg-white rounded-xl p-1 border border-gray-100 w-fit overflow-x-auto">
+        <div className="flex gap-1 mb-4 bg-white/60 backdrop-blur-xl border border-white/60 shadow-[inset_0_1px_1px_rgba(255,255,255,0.85),0_4px_14px_rgba(30,41,59,0.07)] rounded-xl p-1 w-fit overflow-x-auto">
           {[
             { id: 'items', label: 'Items', icon: Package, count: items.length },
             { id: 'movements', label: 'Stock History', icon: Clock, count: movements.length },
           ].map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t.id ? 'bg-primary text-white' : 'text-gray-500 hover:bg-gray-50'}`}>
+            <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 active:scale-95 ${tab === t.id ? 'bg-gradient-to-r from-primary to-orange text-white shadow-[0_4px_12px_rgba(255,107,0,0.3)]' : 'text-gray-500 hover:bg-white/70 hover:text-primary'}`}>
               <t.icon className="w-4 h-4" />
               {t.label}
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${tab === t.id ? 'bg-white/20' : 'bg-gray-100'}`}>{t.count}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${tab === t.id ? 'bg-white/20' : 'bg-gray-200/60 text-gray-500'}`}>{t.count}</span>
             </button>
           ))}
         </div>
@@ -280,10 +289,10 @@ export default function Inventory() {
             <div className="flex flex-col sm:flex-row gap-3 mb-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input type="text" placeholder="Search items..." value={search} onChange={(e) => { setSearch(e.target.value); setShowLowStock(false) }} className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30" />
+                <input type="text" placeholder="Search items..." value={search} onChange={(e) => { setSearch(e.target.value); setShowLowStock(false) }} className="w-full pl-9 pr-3 py-2 bg-white/60 backdrop-blur-xl border border-white/60 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-all" />
               </div>
               <div className="relative">
-                <button onClick={() => setShowCatDrop(!showCatDrop)} className={`flex items-center gap-2 px-3 py-2 border rounded-xl text-sm font-medium transition-colors ${filterCat !== 'all' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
+                <button onClick={() => setShowCatDrop(!showCatDrop)} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium backdrop-blur-xl transition-all duration-200 active:scale-95 ${filterCat !== 'all' ? 'border border-primary/40 bg-primary/10 text-primary shadow-[0_4px_14px_rgba(255,107,0,0.2)]' : 'bg-white/60 border border-white/60 text-gray-600 hover:bg-white/80'}`}>
                   <Filter className="w-4 h-4" />
                   {filterCat === 'all' ? 'All Categories' : getCatName(filterCat)}
                   {filterCat !== 'all' && <span className="text-[10px] bg-primary text-white px-1.5 py-0.5 rounded-full font-bold">{items.filter((i) => i.category === filterCat).length}</span>}
@@ -292,7 +301,7 @@ export default function Inventory() {
                 {showCatDrop && (
                   <>
                     <div className="fixed inset-0 z-[80]" onClick={() => setShowCatDrop(false)} />
-                    <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-200 py-1.5 z-[85] w-64 animate-fade-up">
+                    <div className="glass-dropdown absolute top-full left-0 mt-1 rounded-xl py-1.5 z-[85] w-64">
                       <button onClick={() => { setFilterCat('all'); setShowCatDrop(false); setShowLowStock(false) }} className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${filterCat === 'all' ? 'bg-primary/5 text-primary font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
                         <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center"><Package className="w-3.5 h-3.5 text-primary" /></div>
                         <span className="flex-1 text-left">All Categories</span>
@@ -329,7 +338,7 @@ export default function Inventory() {
             )}
 
             {filteredItems.length === 0 ? (
-              <div className="bg-white rounded-2xl p-12 text-center border border-gray-100">
+              <div className="glass-card rounded-2xl p-12 text-center">
                 <Package className="w-16 h-16 text-gray-200 mx-auto mb-4" />
                 <p className="text-gray-400 font-medium">{items.length === 0 ? 'No items yet. Add your first inventory item.' : 'No items match your search.'}</p>
                 {items.length === 0 && (
@@ -337,13 +346,17 @@ export default function Inventory() {
                 )}
               </div>
             ) : (
-              <ScrollReveal animation="reveal" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredItems.map((item) => {
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {filteredItems.map((item, idx) => {
                   const isLow = item.minStock > 0 && item.currentStock <= item.minStock
                   const isOut = item.currentStock <= 0
                   const stockPercent = item.minStock > 0 ? Math.min(100, (item.currentStock / (item.minStock * 3)) * 100) : 100
+                  const accent = isOut ? '#EF4444' : isLow ? '#FF6B00' : (catColorHex[getCatColor(item.category)] || '#94A3B8')
                   return (
-                    <div key={item.id} onClick={() => canWrite && openAdjust(item)} className={`bg-white rounded-2xl border-2 transition-all hover:shadow-md hover:-translate-y-0.5 group relative overflow-hidden ${canWrite ? 'cursor-pointer' : ''} ${isOut ? 'border-red-200 bg-red-50/30' : isLow ? 'border-orange-200 bg-orange-50/20' : 'border-gray-100 hover:border-primary/30'}`}>
+                    <ScrollReveal key={item.id} animation="reveal" delay={(idx % 3) * 60}>
+                      <div onClick={() => canWrite && openAdjust(item)} style={{ '--sa-b': hexToRgba(accent, 0.5), '--sa-g': hexToRgba(accent, 0.3) }} className={`stock-card group relative overflow-hidden rounded-2xl ${canWrite ? 'cursor-pointer' : ''} ${isOut ? 'stock-card-tint-red stock-glow-red' : isLow ? 'stock-card-tint-orange stock-glow-orange' : ''}`}>
+                      <span className="stock-accent" style={{ background: hexToRgba(accent, 0.95) }} aria-hidden="true" />
+                      <span className="shine-layer" aria-hidden="true" />
                       {isOut && <div className="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-xl uppercase">Out</div>}
                       {isLow && !isOut && <div className="absolute top-0 right-0 bg-orange text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-xl uppercase">Low</div>}
                       {(() => { const exp = getExpiryStatus(item); return exp ? <div className={`absolute top-0 left-0 ${exp.color} text-[9px] font-bold px-2 py-0.5 rounded-br-xl uppercase flex items-center gap-1`}><Timer className="w-2.5 h-2.5" />{exp.label}</div> : null })()}
@@ -368,7 +381,7 @@ export default function Inventory() {
                           <div className="flex items-end justify-between mb-2">
                             <div>
                               <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Current Stock</p>
-                              <p className={`text-xl font-extrabold leading-tight ${isOut ? 'text-red-500' : isLow ? 'text-orange' : 'text-secondary'}`}>
+                              <p className={`text-2xl font-extrabold leading-tight ${isOut ? 'text-red-500' : isLow ? 'text-orange' : 'text-secondary'}`}>
                                 {fixStock(item.currentStock)} <span className="text-xs font-bold text-gray-400">{item.unit}</span>
                               </p>
                             </div>
@@ -377,7 +390,7 @@ export default function Inventory() {
                               <p className="text-sm font-bold text-gray-500">₹{item.costPrice}<span className="text-[9px] font-normal text-gray-400">/{item.unit}</span></p>
                             </div>
                           </div>
-                          <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                          <div className="w-full bg-gray-200/70 rounded-full h-2 overflow-hidden">
                             <div className={`h-full rounded-full transition-all duration-500 ${isOut ? 'bg-red-400' : isLow ? 'bg-orange' : 'bg-green'}`} style={{ width: `${Math.max(2, stockPercent)}%` }}></div>
                           </div>
                           {item.minStock > 0 && (
@@ -394,10 +407,11 @@ export default function Inventory() {
                           </p>
                         )}
                       </div>
-                    </div>
+                      </div>
+                    </ScrollReveal>
                   )
                 })}
-              </ScrollReveal>
+              </div>
             )}
           </>
         )}
@@ -406,12 +420,12 @@ export default function Inventory() {
         {tab === 'movements' && (
           <>
             {movements.length === 0 ? (
-              <div className="bg-white rounded-2xl p-12 text-center border border-gray-100">
+              <div className="glass-card rounded-2xl p-12 text-center">
                 <Clock className="w-16 h-16 text-gray-200 mx-auto mb-4" />
                 <p className="text-gray-400 font-medium">No stock movements recorded yet.</p>
               </div>
             ) : (
-              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <div className="glass-card rounded-2xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>

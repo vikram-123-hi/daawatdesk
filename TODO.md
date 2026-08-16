@@ -57,3 +57,20 @@
 - Spark plan current usage: Writes 0.1%, Reads 0.3%, Deletes 0% — well within limits
 - Current daily limits: 20K writes, 50K reads, 20K deletes
 - Blaze plan needed only for Cloud Functions, not for current features
+
+## License Store — Future: Enable Real Razorpay Integration
+- **Status:** Pending — gate is currently commented out + dummy test mode active
+- **What:** Wire up the real (sandbox → live) Razorpay flow once a key is unavailable/ready
+- **Location:** `src/components/BuyLicense.jsx`
+- **Currently in place (commented / disabled, marked `TODO(future)`):**
+  - The `if (!keyConfigured) { ... }` early-return that blocked checkout without a key
+  - The yellow "Razorpay is not configured" warning banner
+  - The submit button `disabled={!keyConfigured || ...}` gate
+- **Currently active:** Dummy test mode (`isDummy`) — when `VITE_RAZORPAY_KEY_ID` is unset, submit simulates success and shows a `DAW-TEST-xxxx-xxxx` key without charging.
+- **To finish real integration:**
+  1. Set a live/test `VITE_RAZORPAY_KEY_ID` in `.env` (and Cloudflare env vars)
+  2. Un-comment the three `TODO(future)` blocks above
+  3. Set `RAZORPAY_KEY_SECRET`, `RESEND_API_KEY`, `FIREBASE_SERVICE_ACCOUNT` in Cloudflare
+  4. Deploy `functions/` (create-order / verify-payment / validate-key)
+  5. Verify order → payment → key email → Firestore `licenses` doc → Admin Licenses tab
+- **Server functions already built (need deploy):** `functions/api/*.js`, `functions/_lib/*`

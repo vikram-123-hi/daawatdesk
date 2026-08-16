@@ -7,13 +7,15 @@ import { db } from '../firebase'
 import { doc, getDoc, updateDoc, addDoc, collection, query, where, getDocs, orderBy, deleteDoc, writeBatch, increment, onSnapshot, limit } from 'firebase/firestore'
 import {
   ArrowLeft, Plus, Minus, Trash2, Percent, CreditCard, Banknote, QrCode,
-  Printer, Search, Grid3X3, ShoppingBag, Users, X, Check, ChevronDown,
+  Search, Grid3X3, ShoppingBag, Users, X, Check, ChevronDown,
   Utensils, Coffee, IceCream, Pizza, Cake, LogOut, User, ChefHat, Receipt,
   Settings, GripVertical, Edit3, Save, Package, TableProperties, Tag, Key, History, Download, Calendar, ChevronLeft, ChevronRight, Phone,
-  Camera, Loader2, Sparkles, Image, Zap, ScanLine, MapPin, Globe, Info
+  Camera, Loader2, Sparkles, Image, MapPin, Globe, Info
 } from 'lucide-react'
 import { vibrate } from '../utils/haptics'
 import ItemDetailModal from './ItemDetailModal'
+import { DishImage } from '../utils/foodImageHelper'
+import { getItemIngredientInfo } from '../utils/itemDetailHelper'
 
 function toLocalDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -258,7 +260,6 @@ export default function Billing() {
   const [showMenuManager, setShowMenuManager] = useState(false)
   const [menuTab, setMenuTab] = useState('categories')
   const [editingCategory, setEditingCategory] = useState(null)
-  const [editingItem, setEditingItem] = useState(null)
   const [editingTable, setEditingTable] = useState(null)
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryIcon, setNewCategoryIcon] = useState('Utensils')
@@ -271,6 +272,9 @@ export default function Billing() {
   const [newSubCatName, setNewSubCatName] = useState('')
   const [editingSubCat, setEditingSubCat] = useState(null)
   const [newItemSubCategory, setNewItemSubCategory] = useState('')
+  const [itemImageUrl, setItemImageUrl] = useState('')
+  const [itemImageUploading, setItemImageUploading] = useState(false)
+  const [editForm, setEditForm] = useState(null)
   const [menuSaving, setMenuSaving] = useState(false)
   const [menuCardUploading, setMenuCardUploading] = useState(false)
   const [menuCardExtracted, setMenuCardExtracted] = useState([])
@@ -293,6 +297,7 @@ export default function Billing() {
   const [showWaiterDrop, setShowWaiterDrop] = useState(false)
   const [showCustModal, setShowCustModal] = useState(false)
   const [showCart, setShowCart] = useState(false)
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
   const [custModalName, setCustModalName] = useState('')
   const [custModalDob, setCustModalDob] = useState('')
   const [custModalDobDisplay, setCustModalDobDisplay] = useState('')
@@ -344,10 +349,19 @@ export default function Billing() {
   }, [currentUser])
 
   useEffect(() => {
+    const handleMouseMove = (e) => {
+      const x = (e.clientX / window.innerWidth) - 0.5
+      const y = (e.clientY / window.innerHeight) - 0.5
+      setMousePos({ x, y })
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
+  }, [])
+
+  useEffect(() => {
     if (!readyAlerts.length) return
     const timers = readyAlerts.map((a) => setTimeout(() => dismissReadyAlert(a.id), 5000))
-    return () => timers.forEach(clearTimeout)
-  }, [readyAlerts, dismissReadyAlert])
+    return () => timers.forEach(clearTimeout)  }, [readyAlerts, dismissReadyAlert])
 
   const [waiterAlerts, setWaiterAlerts] = useState([])
   const waiterRingtoneRef = useRef(null)
@@ -1478,19 +1492,49 @@ Rules:
   function addItem_() {
     if (!newItemName.trim() || !newItemPrice) return
     const id = Date.now()
-    const newItem = { id, name: newItemName.trim(), category: newItemCategory, subCategory: newItemSubCategory || '', price: Number(newItemPrice), veg: newItemVeg }
+    const newItem = { id, name: newItemName.trim(), category: newItemCategory, subCategory: newItemSubCategory || '', price: Number(newItemPrice), veg: newItemVeg, image: itemImageUrl || '' }
     const updated = [...menuItems, newItem]
     setMenuItems(updated)
     setNewItemName('')
     setNewItemPrice('')
     setNewItemSubCategory('')
+    setItemImageUrl('')
     saveMenu(menuCategories, updated, tables)
   }
 
-  function updateItem(id, name, price, veg, category, subCategory) {
-    const updated = menuItems.map((i) => (i.id === id ? { ...i, name, price: Number(price), veg, category, subCategory } : i))
+  async function uploadItemImage(file) {
+    if (!file) return ''
+    if (!file.type.startsWith('image/')) { alert('Only image files are allowed.'); return '' }
+    if (file.size > 10 * 1024 * 1024) { alert('Image must be less than 10MB'); return '' }
+    setItemImageUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('image', file)
+      const imgRes = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_KEY}`, { method: 'POST', body: formData })
+      const imgData = await imgRes.json()
+      if (!imgData.success) throw new Error(imgData.error?.message || 'Image upload failed')
+      return imgData.data.url
+    } catch (err) {
+      console.error('Item image upload error:', err)
+      alert('Upload failed: ' + err.message)
+      return ''
+    } finally {
+      setItemImageUploading(false)
+    }
+  }
+
+  function handleItemImageChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    uploadItemImage(file).then((url) => { if (url) setItemImageUrl(url) })
+    e.target.value = ''
+  }
+
+  function updateItem(id, name, price, veg, category, subCategory, image) {
+    const updated = menuItems.map((i) => (i.id === id ? { ...i, name, price: Number(price), veg, category, subCategory, image: image !== undefined ? (image || '') : (i.image || '') } : i))
     setMenuItems(updated)
     setEditingItem(null)
+    setItemImageUrl('')
     saveMenu(menuCategories, updated, tables)
   }
 
@@ -1525,77 +1569,34 @@ Rules:
 
   const IconComp = (name) => iconComponents[name] || Utensils
 
+  function saveEditItem() {
+    if (!editForm) return
+    if (!editForm.name.trim() || !editForm.price) return
+    updateItem(editForm.id, editForm.name.trim(), Number(editForm.price), editForm.veg, editForm.category, editForm.subCategory, itemImageUrl)
+    setEditForm(null)
+    setItemImageUrl('')
+  }
+
   function renderItemRow(item) {
     return (
       <div key={item.id} className="flex items-center gap-3 bg-gray-50 rounded-xl p-3 mb-2">
-        {editingItem === item.id ? (
-          <>
-            <input type="text" defaultValue={item.name} id={`item-name-${item.id}`} className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/30" />
-            <input type="number" inputMode="numeric" defaultValue={item.price} id={`item-price-${item.id}`} className="w-20 px-3 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/30" />
-            <div className="relative">
-              <select defaultValue={String(item.veg)} id={`item-veg-${item.id}`} className="appearance-none pr-8 px-2 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer">
-                <option value="true">Veg</option>
-                <option value="false">Non-Veg</option>
-              </select>
-              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
-            <div className="relative">
-              <select defaultValue={item.category} id={`item-cat-${item.id}`} className="appearance-none pr-8 px-2 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer">
-                {menuCategories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
-            {(() => {
-              const cat = menuCategories.find((c) => c.id === item.category)
-              const subs = cat?.subCategories || []
-              if (subs.length === 0) return null
-                return (
-                <div className="relative">
-                  <select defaultValue={item.subCategory || ''} id={`item-sub-${item.id}`} className="appearance-none pr-8 px-2 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer">
-                    <option value="">None</option>
-                    {subs.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                </div>
-              )
-            })()}
-            <button
-              onClick={() => {
-                const name = document.getElementById(`item-name-${item.id}`).value
-                const price = document.getElementById(`item-price-${item.id}`).value
-                const veg = document.getElementById(`item-veg-${item.id}`).value === 'true'
-                const category = document.getElementById(`item-cat-${item.id}`).value
-                const subEl = document.getElementById(`item-sub-${item.id}`)
-                const subCategory = subEl ? subEl.value : item.subCategory || ''
-                updateItem(item.id, name, price, veg, category, subCategory)
-              }}
-              className="p-2 text-green hover:bg-green/10 rounded-lg"
-            >
-              <Save className="w-4 h-4" />
-            </button>
-            <button onClick={() => setEditingItem(null)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg">
-              <X className="w-4 h-4" />
-            </button>
-          </>
-        ) : (
-          <>
-            <div className={`w-3 h-3 rounded-sm border-2 ${item.veg ? 'border-green' : 'border-red-500'}`}>
-              <div className={`w-1.5 h-1.5 mx-auto mt-0.5 ${item.veg ? 'bg-green rounded-full' : 'bg-red-500'}`} style={!item.veg ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></div>
-            </div>
-            <span className="flex-1 font-medium text-sm text-secondary">{item.name}</span>
-            <span className="text-sm font-bold text-primary">₹{item.price}</span>
-            <button onClick={() => setEditingItem(item.id)} className="p-2 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-lg">
-              <Edit3 className="w-4 h-4" />
-            </button>
-            <button onClick={() => { if (window.confirm(`Delete "${item.name}"?`)) deleteItem(item.id) }} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </>
-        )}
+        <div className={`w-3 h-3 rounded-sm border-2 ${item.veg ? 'border-green' : 'border-red-500'}`}>
+          <div className={`w-1.5 h-1.5 mx-auto mt-0.5 ${item.veg ? 'bg-green rounded-full' : 'bg-red-500'}`} style={!item.veg ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></div>
+        </div>
+        <span className="flex-1 font-medium text-sm text-secondary flex items-center gap-1.5">
+          {item.name}
+          {item.image && <Image className="w-3.5 h-3.5 text-primary/60" />}
+        </span>
+        <span className="text-sm font-bold text-primary">₹{item.price}</span>
+        <button
+          onClick={() => { setEditForm({ id: item.id, name: item.name, price: String(item.price), veg: item.veg, category: item.category, subCategory: item.subCategory || '', image: item.image || '' }); setItemImageUrl(item.image || '') }}
+          className="p-2 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-lg"
+        >
+          <Edit3 className="w-4 h-4" />
+        </button>
+        <button onClick={() => { if (window.confirm(`Delete "${item.name}"?`)) deleteItem(item.id) }} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">
+          <Trash2 className="w-4 h-4" />
+        </button>
       </div>
     )
   }
@@ -1666,9 +1667,43 @@ Rules:
   }
 
   return (
-    <div className="h-dvh flex flex-col relative">
-      <div className="fixed inset-0 bg-[url('/bg-billing.png')] bg-cover bg-center bg-fixed pointer-events-none"></div>
-      <div className="fixed inset-0 bg-white/30 backdrop-blur-md pointer-events-none"></div>
+    <div className="h-dvh flex flex-col relative overflow-hidden">
+      {/* Interactive Cursor Light Glow */}
+      <div
+        className="fixed w-[26rem] h-[26rem] rounded-full bg-gradient-to-r from-orange-400/25 via-amber-300/20 to-transparent blur-3xl pointer-events-none transition-transform duration-75 ease-out z-0"
+        style={{
+          left: '50%',
+          top: '50%',
+          transform: `translate3d(calc(-50% + ${mousePos.x * 600}px), calc(-50% + ${mousePos.y * 600}px), 0)`,
+        }}
+      ></div>
+
+      {/* Parallax Layer 1 - Dot Grid Mesh */}
+      <div className="fixed inset-0 bg-[radial-gradient(#000000_1px,transparent_1px)] [background-size:24px_24px] opacity-[0.04] pointer-events-none"></div>
+
+      {/* Parallax Layer 2 - Warm Amber Blob (Top-Left) */}
+      <div
+        className="fixed -top-16 -left-16 w-[32rem] h-[32rem] bg-gradient-to-br from-amber-400/40 via-orange-500/30 to-rose-400/25 rounded-full blur-3xl pointer-events-none transition-transform duration-100 ease-out"
+        style={{ transform: `translate3d(${mousePos.x * -80}px, ${mousePos.y * -80}px, 0)` }}
+      ></div>
+
+      {/* Parallax Layer 3 - Soft Indigo Blob (Top-Right) */}
+      <div
+        className="fixed top-12 -right-16 w-[34rem] h-[34rem] bg-gradient-to-tr from-indigo-500/25 via-purple-400/20 to-pink-400/20 rounded-full blur-3xl pointer-events-none transition-transform duration-150 ease-out"
+        style={{ transform: `translate3d(${mousePos.x * 100}px, ${mousePos.y * 100}px, 0)` }}
+      ></div>
+
+      {/* Parallax Layer 4 - Muted Emerald Blob (Bottom) */}
+      <div
+        className="fixed -bottom-20 left-1/3 w-[32rem] h-[32rem] bg-gradient-to-r from-emerald-400/30 via-teal-400/25 to-cyan-400/20 rounded-full blur-3xl pointer-events-none transition-transform duration-150 ease-out"
+        style={{ transform: `translate3d(${mousePos.x * -60}px, ${mousePos.y * 80}px, 0)` }}
+      ></div>
+
+      {/* Gentle Frosted Glass Overlay */}
+      <div className="fixed inset-0 bg-white/40 backdrop-blur-[6px] pointer-events-none z-0"></div>
+
+      {/* Subtle Noise Texture (background image) */}
+      <div className="fixed inset-0 noise-bg opacity-[0.06] pointer-events-none"></div>
       <div className="relative z-10 flex flex-col h-dvh">
       <header className="bg-white/90 border-b border-gray-200/60 px-3 sm:px-4 py-2 sm:py-3 flex items-center justify-between flex-wrap gap-2 sticky top-0 z-[85]">
         <div className="flex items-center gap-3">
@@ -1685,7 +1720,7 @@ Rules:
           {userProfile?.restaurantCode && (
             <button
               onClick={() => { navigator.clipboard.writeText(userProfile.restaurantCode); setCodeCopied(true); setTimeout(() => setCodeCopied(false), 1500) }}
-              className="flex items-center gap-1.5 bg-primary/10 hover:bg-primary/20 text-primary px-2 sm:px-2.5 py-1 rounded-lg text-sm font-mono font-bold tracking-wider transition-colors"
+              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 sm:px-2.5 py-1 rounded-lg text-sm font-mono font-bold tracking-wider transition-colors"
               title="Click to copy kitchen code"
             >
               <Key className="w-3.5 h-3.5" />
@@ -1696,22 +1731,26 @@ Rules:
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowNewOrderModal(true)}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-primary to-orange text-white px-3 py-2 rounded-lg text-sm font-semibold hover:shadow-lg hover:shadow-primary/25 active:scale-[0.97] transition-all"
+            className="group relative flex items-center gap-1.5 bg-gradient-to-r from-primary to-orange text-white px-3 py-2 rounded-lg text-sm font-semibold hover:shadow-lg hover:shadow-primary/25 active:scale-[0.97] transition-all"
           >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">New Order</span>
+            <span className="shine-layer" aria-hidden="true" />
+            <Plus className="w-4 h-4 relative z-10" />
+            <span className="hidden sm:inline relative z-10">New Order</span>
           </button>
-          <button onClick={() => setShowTableModal(true)} className="flex items-center gap-1.5 bg-surface hover:bg-gray-200 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 active:scale-95">
-            <Users className="w-4 h-4" />
-            <span className="hidden sm:inline">{selectedTable ? `Table ${selectedTable}` : 'Parcel'}</span>
+          <button onClick={() => setShowTableModal(true)} className="group relative flex items-center gap-1.5 bg-surface hover:bg-gray-200 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 active:scale-95">
+            <span className="shine-layer" aria-hidden="true" />
+            <Users className="w-4 h-4 relative z-10" />
+            <span className="hidden sm:inline relative z-10">{selectedTable ? `Table ${selectedTable}` : 'Parcel'}</span>
           </button>
-          <button onClick={() => setShowMergeSplit(true)} className="hidden sm:flex items-center gap-1.5 bg-surface hover:bg-gray-200 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
-            Merge / Split
+          <button onClick={() => setShowMergeSplit(true)} className="group relative hidden sm:flex items-center gap-1.5 bg-surface hover:bg-gray-200 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+            <span className="shine-layer" aria-hidden="true" />
+            <span className="relative z-10 flex items-center gap-1.5">Merge / Split</span>
           </button>
           <div className="relative">
-            <button onClick={(e) => { e.stopPropagation(); setShowKitchenClear(!showKitchenClear); setShowProfileDrop(false); setShowWaiterDrop(false) }} className="relative flex items-center gap-1.5 bg-orange-50 hover:bg-orange-100 text-orange-600 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
-              <ChefHat className="w-4 h-4" />
-              <span className="hidden sm:inline">Kitchen</span>
+            <button onClick={(e) => { e.stopPropagation(); setShowKitchenClear(!showKitchenClear); setShowProfileDrop(false); setShowWaiterDrop(false) }} className="group relative flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+              <span className="shine-layer" aria-hidden="true" />
+              <ChefHat className="w-4 h-4 relative z-10" />
+              <span className="hidden sm:inline relative z-10">Kitchen</span>
               {readyCount > 0 && (
                 <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center animate-bounce">{readyCount}</span>
               )}
@@ -1728,9 +1767,10 @@ Rules:
             )}
           </div>
           <div className="relative">
-            <button onClick={(e) => { e.stopPropagation(); setShowWaiterDrop(!showWaiterDrop); setShowProfileDrop(false); setShowKitchenClear(false) }} className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${waiterAlerts.length > 0 ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 animate-pulse' : 'bg-surface hover:bg-gray-200'}`}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-              Waiter
+            <button onClick={(e) => { e.stopPropagation(); setShowWaiterDrop(!showWaiterDrop); setShowProfileDrop(false); setShowKitchenClear(false) }} className={`group relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${waiterAlerts.length > 0 ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 animate-pulse' : 'bg-surface hover:bg-gray-200'}`}>
+              <span className="shine-layer" aria-hidden="true" />
+              <svg className="w-4 h-4 relative z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+              <span className="relative z-10">Waiter</span>
               {waiterAlerts.length > 0 && (
                 <span className="absolute -top-1.5 -right-1.5 bg-indigo-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">{waiterAlerts.length}</span>
               )}
@@ -1768,39 +1808,52 @@ Rules:
           </div>
           {currentUser && (
             <div className="relative">
-              <button onClick={(e) => { e.stopPropagation(); setShowProfileDrop(!showProfileDrop); setShowKitchenClear(false); setShowWaiterDrop(false) }} className="flex items-center gap-2 bg-primary/5 hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors">
-                <div className="w-7 h-7 bg-primary rounded-full flex items-center justify-center overflow-hidden">
+              <button onClick={(e) => { e.stopPropagation(); setShowProfileDrop(!showProfileDrop); setShowKitchenClear(false); setShowWaiterDrop(false) }} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 ${showProfileDrop ? 'glass-pill-active' : 'glass-pill'}`}>
+                <div className="w-7 h-7 bg-primary rounded-full flex items-center justify-center overflow-hidden ring-1 ring-white/60">
                   {(userProfile?.profilePic || currentUser.photoURL) ? (
                     <img src={userProfile?.profilePic || currentUser.photoURL} alt="" className="w-full h-full object-cover" />
                   ) : (
                     <span className="text-white text-xs font-bold">{(currentUser.displayName || currentUser.email || '?')[0].toUpperCase()}</span>
                   )}
                 </div>
-                <span className="text-sm font-medium text-secondary hidden sm:inline">{currentUser.displayName || currentUser.email?.split('@')[0]}</span>
-                <ChevronDown className="w-3 h-3 text-gray-400" />
+                <span className={`text-sm font-medium hidden sm:inline transition-colors ${showProfileDrop ? 'text-white' : 'text-secondary'}`}>{currentUser.displayName || currentUser.email?.split('@')[0]}</span>
+                <ChevronDown className={`w-3 h-3 ${showProfileDrop ? 'text-white' : 'text-gray-400'} transition-colors`} />
               </button>
               {showProfileDrop && (
-                <div onClick={(e) => e.stopPropagation()} className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 w-52 py-1">
-                  <div className="px-4 py-2.5 border-b border-gray-100">
-                    <p className="text-xs text-gray-400">Signed in as</p>
-                    <p className="text-sm font-semibold text-secondary truncate">{currentUser.displayName || currentUser.email}</p>
+                <div onClick={(e) => e.stopPropagation()} className="glass-dropdown absolute right-0 top-full mt-2 rounded-2xl z-50 w-60 py-1.5">
+                  <div className="px-4 py-3 border-b border-slate-200/60 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange to-primary flex items-center justify-center flex-shrink-0 shadow-md shadow-primary/25">
+                      {(userProfile?.profilePic || currentUser.photoURL) ? (
+                        <img src={userProfile?.profilePic || currentUser.photoURL} alt="" className="w-full h-full rounded-full object-cover" />
+                      ) : (
+                        <span className="text-white text-sm font-bold">{(currentUser.displayName || currentUser.email || '?')[0].toUpperCase()}</span>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-secondary truncate">{currentUser.displayName || currentUser.email}</p>
+                      <p className="text-[11px] text-slate-500 truncate">{userProfile?.restaurant || currentUser.email}</p>
+                    </div>
                   </div>
-                  <button onClick={() => { setShowProfileDrop(false); setShowProfileModal(true) }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                    <User className="w-4 h-4" /> Profile
-                  </button>
-                  <button onClick={() => { setShowProfileDrop(false); setShowMenuManager(true) }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                    <Settings className="w-4 h-4" /> Manage Menu
-                  </button>
-                  <button onClick={() => { setShowProfileDrop(false); setShowHistory(true) }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                    <History className="w-4 h-4" /> Transaction History
-                  </button>
-                  <button onClick={() => { setShowProfileDrop(false); setUpiInput(upiId || ''); setShowUpiModal(true) }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                    <QrCode className="w-4 h-4" /> UPI Settings
-                  </button>
-                  <div className="border-t border-gray-100 my-1"></div>
-                  <button onClick={async () => { setShowProfileDrop(false); await logout(); navigate('/login') }} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">
-                    <LogOut className="w-4 h-4" /> Logout
-                  </button>
+                  <div className="py-1">
+                    <button onClick={() => { setShowProfileDrop(false); setShowProfileModal(true) }} className="glass-dropdown-item flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-slate-700 rounded-xl mx-1.5 w-[calc(100%-12px)]">
+                      <User className="w-4 h-4 text-orange" /> Profile
+                    </button>
+                    <button onClick={() => { setShowProfileDrop(false); setShowMenuManager(true) }} className="glass-dropdown-item flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-slate-700 rounded-xl mx-1.5 w-[calc(100%-12px)]">
+                      <Settings className="w-4 h-4 text-orange" /> Manage Menu
+                    </button>
+                    <button onClick={() => { setShowProfileDrop(false); setShowHistory(true) }} className="glass-dropdown-item flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-slate-700 rounded-xl mx-1.5 w-[calc(100%-12px)]">
+                      <History className="w-4 h-4 text-orange" /> Transaction History
+                    </button>
+                    <button onClick={() => { setShowProfileDrop(false); setUpiInput(upiId || ''); setShowUpiModal(true) }} className="glass-dropdown-item flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-slate-700 rounded-xl mx-1.5 w-[calc(100%-12px)]">
+                      <QrCode className="w-4 h-4 text-orange" /> UPI Settings
+                    </button>
+                  </div>
+                  <div className="border-t border-slate-200/60 my-1"></div>
+                  <div className="py-1">
+                    <button onClick={async () => { setShowProfileDrop(false); await logout(); navigate('/login') }} className="glass-dropdown-item flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-red-600 rounded-xl mx-1.5 w-[calc(100%-12px)]">
+                      <LogOut className="w-4 h-4" /> Logout
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1893,14 +1946,15 @@ Rules:
       )}
 
       {showHistory && (
-        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-fade-up">
-            <div className="flex items-center justify-between p-5 border-b border-gray-200">
+        <div className="fixed inset-0 modal-backdrop z-[100] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="accent-line" />
+            <div className="modal-header flex items-center justify-between p-5">
               <div className="flex items-center gap-3">
-                <History className="w-5 h-5 text-purple" />
-                <h2 className="text-lg font-bold text-secondary">Transaction History</h2>
+                <div className="w-9 h-9 rounded-xl bg-purple/10 flex items-center justify-center"><History className="w-4.5 h-4.5 text-purple" /></div>
+                <h2 className="modal-title text-lg">Transaction History</h2>
               </div>
-              <button onClick={() => setShowHistory(false)} className="p-2 hover:bg-gray-100 rounded-lg"><X className="w-5 h-5" /></button>
+              <button onClick={() => setShowHistory(false)} className="modal-close"><X className="w-5 h-5" /></button>
             </div>
             <div className="relative flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100 bg-gray-50">
               <div className="flex items-center gap-2">
@@ -1983,7 +2037,7 @@ Rules:
                 </>
               )}
             </div>
-            <div className="flex-1 overflow-y-auto p-5">
+            <div className="flex-1 overflow-y-auto p-5 premium-scroll">
               {historyLoading ? (
                 <div className="flex justify-center py-10"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div></div>
               ) : historyTxns.length === 0 ? (
@@ -2013,8 +2067,8 @@ Rules:
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="text-right">
-                              <p className="text-sm font-bold text-secondary">₹{t.total?.toFixed(2)}</p>
-                              <p className="text-[10px] text-gray-400">{t.payment}</p>
+                              <p className="text-sm font-bold text-secondary tabular-nums">₹{t.total?.toFixed(2)}</p>
+                              <p className="text-[10px] text-gray-400 font-medium">{t.payment}</p>
                             </div>
                             <svg className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                           </div>
@@ -2023,40 +2077,40 @@ Rules:
                           <div className="px-4 pb-4 animate-fade-up">
                             <div className="border-t border-gray-100 pt-3 space-y-1.5">
                               {t.items.map((item, idx) => (
-                                <div key={idx} className="flex items-center justify-between text-sm">
+                                <div key={idx} className="flex items-center justify-between text-sm py-0.5">
                                   <div className="flex items-center gap-2">
                                     <span className={`w-2.5 h-2.5 rounded-sm border flex-shrink-0 ${item.veg !== false ? 'border-green' : 'border-red-500'}`}>
                                       <span className={`block w-1 h-1 mx-auto mt-[1px] ${item.veg !== false ? 'bg-green rounded-full' : 'bg-red-500'}`} style={item.veg === false ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></span>
                                     </span>
-                                    <span className="text-gray-700">{item.name}</span>
-                                    <span className="text-gray-400 text-xs">×{item.qty}</span>
+                                    <span className="text-gray-700 font-medium">{item.name}</span>
+                                    <span className="text-gray-400 text-xs tabular-nums">×{item.qty}</span>
                                   </div>
-                                  <span className="font-semibold text-gray-700">₹{(item.price * item.qty).toFixed(2)}</span>
+                                  <span className="font-semibold text-gray-700 tabular-nums">₹{(item.price * item.qty).toFixed(2)}</span>
                                 </div>
                               ))}
                             </div>
                             <div className="border-t border-dashed border-gray-200 mt-3 pt-2.5 space-y-1">
                               <div className="flex justify-between text-xs text-gray-500">
                                 <span>Subtotal</span>
-                                <span>₹{subtotal.toFixed(2)}</span>
+                                <span className="tabular-nums">₹{subtotal.toFixed(2)}</span>
                               </div>
                               <div className="flex justify-between text-xs text-gray-500">
                                 <span>CGST (2.5%)</span>
-                                <span>₹{(gst / 2).toFixed(2)}</span>
+                                <span className="tabular-nums">₹{(gst / 2).toFixed(2)}</span>
                               </div>
                               <div className="flex justify-between text-xs text-gray-500">
                                 <span>SGST (2.5%)</span>
-                                <span>₹{(gst / 2).toFixed(2)}</span>
+                                <span className="tabular-nums">₹{(gst / 2).toFixed(2)}</span>
                               </div>
                               {t.discount > 0 && (
                                 <div className="flex justify-between text-xs text-green">
                                   <span>Discount</span>
-                                  <span>-₹{t.discount.toFixed(2)}</span>
+                                  <span className="tabular-nums">-₹{t.discount.toFixed(2)}</span>
                                 </div>
                               )}
                               <div className="flex justify-between text-sm font-bold text-secondary pt-1 border-t border-gray-100">
                                 <span>Total</span>
-                                <span>₹{t.total?.toFixed(2)}</span>
+                                <span className="tabular-nums text-primary">₹{t.total?.toFixed(2)}</span>
                               </div>
                             </div>
                             {(t.customerName || t.customerId) && (
@@ -2186,66 +2240,75 @@ Rules:
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden pos-bg-mesh">
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="p-4 bg-white border-b border-gray-200">
-            <div className="relative">
-              <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search menu items..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30"
-              />
-            </div>
-            <div className="flex items-center gap-2 mt-3 h-7">
-              <button
-                onClick={() => setVegFilter(vegFilter === 'veg' ? 'all' : 'veg')}
-                className={`relative w-12 h-7 rounded-full transition-colors duration-300 flex-shrink-0 ${vegFilter === 'veg' ? 'bg-green' : 'bg-gray-300'}`}
-              >
-                <span
-                  className="absolute top-[3px] w-[22px] h-[22px] bg-white rounded-full shadow-md transition-all duration-300"
-                  style={{ left: vegFilter === 'veg' ? '23px' : '3px' }}
-                ></span>
-              </button>
-              <span className="w-3 h-3 rounded-sm border-[1.5px] border-green flex items-center justify-center flex-shrink-0"><span className="w-1 h-1 bg-green rounded-full"></span></span>
-              <span className="text-xs font-bold text-green">Veg Only</span>
+          {/* Top Search & Filter Bar */}
+          <div className="p-4 bg-white/90 backdrop-blur-md border-b border-slate-200/80 shadow-2xs">
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search dishes, categories, or items (Press /)..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="input-premium pl-10 pr-4 py-2.5 bg-slate-50/80 border-slate-200 focus:bg-white text-sm"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold bg-slate-200 rounded-full w-4 h-4 flex items-center justify-center">✕</button>
+                )}
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl flex-shrink-0">
+                <button
+                  onClick={() => setVegFilter(vegFilter === 'veg' ? 'all' : 'veg')}
+                  className={`relative w-10 h-6 rounded-full transition-colors duration-300 flex-shrink-0 ${vegFilter === 'veg' ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                >
+                  <span
+                    className="absolute top-[2px] w-[20px] h-[20px] bg-white rounded-full shadow-md transition-all duration-300"
+                    style={{ left: vegFilter === 'veg' ? '18px' : '2px' }}
+                  ></span>
+                </button>
+                <span className="w-3 h-3 rounded-xs border-[1.5px] border-emerald-600 flex items-center justify-center flex-shrink-0"><span className="w-1 h-1 bg-emerald-600 rounded-full"></span></span>
+                <span className="text-xs font-bold text-emerald-700">Veg Only</span>
+              </div>
             </div>
           </div>
 
-          <div className="flex gap-2 p-4 bg-white border-b border-gray-200 overflow-x-auto">
+          {/* Category Navigation Pills */}
+          <div className="flex gap-2 p-3 bg-gradient-to-b from-white/85 to-white/40 backdrop-blur-md border-b border-slate-200/60 overflow-x-auto scrollbar-hide">
             {menuCategories.map((cat) => {
               const IC = IconComp(cat.icon)
+              const isActive = activeCategory === cat.id && !searchQuery
               return (
                 <button
                   key={cat.id}
                   onClick={() => { setActiveCategory(cat.id); setActiveSubCategory(null); setSearchQuery('') }}
-                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap transition-all ${
-                    activeCategory === cat.id && !searchQuery
-                      ? 'bg-primary text-white shadow-md'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 active:scale-95 ${
+                    isActive
+                      ? 'glass-pill-active scale-[1.02]'
+                      : 'glass-pill'
                   }`}
                 >
-                  <IC className="w-4 h-4" />
+                  <IC className="w-3.5 h-3.5" />
                   {cat.name}
                 </button>
               )
             })}
           </div>
 
+          {/* Sub-Category Pills */}
           {(() => {
             const currentCat = menuCategories.find((c) => c.id === activeCategory)
             const subs = currentCat?.subCategories || []
             if (subs.length === 0 || searchQuery) return null
             return (
-              <div className="flex gap-1.5 px-4 py-2 bg-gray-50 border-b border-gray-200 overflow-x-auto">
+              <div className="flex gap-1.5 px-3 py-2 bg-slate-50/80 border-b border-slate-200/60 overflow-x-auto scrollbar-hide">
                 <button
                   onClick={() => setActiveSubCategory(null)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all ${
                     !activeSubCategory
-                      ? 'bg-secondary text-white'
-                      : 'bg-white text-gray-500 hover:bg-gray-200 border border-gray-200'
+                      ? 'bg-slate-900 text-white shadow-2xs'
+                      : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-200'
                   }`}
                 >
                   All
@@ -2254,10 +2317,10 @@ Rules:
                   <button
                     key={sub.id}
                     onClick={() => setActiveSubCategory(sub.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                    className={`px-3 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all ${
                       activeSubCategory === sub.id
-                        ? 'bg-secondary text-white'
-                        : 'bg-white text-gray-500 hover:bg-gray-200 border border-gray-200'
+                        ? 'bg-slate-900 text-white shadow-2xs'
+                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-200'
                     }`}
                   >
                     {sub.name}
@@ -2267,53 +2330,126 @@ Rules:
             )
           })()}
 
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {filteredItems.map((item) => {
+          {/* POS Dish Items Grid */}
+          <div className="flex-1 overflow-y-auto p-4 premium-scroll">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3.5">
+              {filteredItems.map((item, i) => {
                 const inOrder = orderItems.find((i) => i.id === item.id)
+                const currentCat = menuCategories.find((c) => c.id === activeCategory)
+                const IC = IconComp(currentCat?.icon || 'Utensils')
+
                 return (
-                  <button
+                  <div
                     key={item.id}
                     onClick={() => addItem(item)}
-                    className={`relative bg-white rounded-xl p-4 text-left border-2 transition-all duration-200 hover:shadow-md active:scale-[0.96] ${
-                      inOrder ? 'border-primary shadow-sm shadow-primary/10' : 'border-transparent hover:border-gray-200'
+                    className={`pos-item-card animate-card-in cursor-pointer flex flex-col justify-between group ${
+                      inOrder ? 'pos-item-card-selected' : ''
                     }`}
+                    style={{ animationDelay: `${Math.min(i * 30, 600)}ms` }}
                   >
+                    <span className="shine-layer" aria-hidden="true" />
+                    {/* Floating Quantity Badge */}
                     {inOrder && (
-                      <span className="absolute -top-2 -right-2 w-6 h-6 bg-primary text-white text-xs font-bold rounded-full flex items-center justify-center">
+                      <span className="absolute -top-2 -right-2 z-10 w-6 h-6 bg-primary text-white text-xs font-black rounded-full flex items-center justify-center shadow-md animate-bounce-short">
                         {inOrder.qty}
                       </span>
                     )}
-                    <div className="flex items-center justify-between gap-1 mb-2">
-                      <div className={`w-3 h-3 rounded-sm border-2 ${item.veg ? 'border-green' : 'border-red-500'}`}>
-                        <div className={`w-1.5 h-1.5 mx-auto mt-0.5 ${item.veg ? 'bg-green rounded-full' : 'bg-red-500'}`} style={!item.veg ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></div>
+
+                    {/* Dish Photo */}
+                    <div className="relative -mx-1 -mt-1 mb-3 overflow-hidden rounded-xl">
+                      <DishImage
+                        itemName={item.name}
+                        categoryId={currentCat?.id}
+                        customImage={item.image}
+                        alt={item.name}
+                        loading="lazy"
+                        className={`w-full h-24 object-cover transition-transform duration-300 group-hover:scale-110 ${inOrder ? 'opacity-90' : ''}`}
+                      />
+                      <div className={`absolute inset-0 bg-gradient-to-t from-black/30 to-transparent pointer-events-none ${inOrder ? 'ring-2 ring-primary ring-inset rounded-xl' : ''}`}></div>
+                      {/* Veg / Non-Veg Tag on photo */}
+                      <div className={`absolute top-2 left-2 z-20 w-3.5 h-3.5 rounded-xs border-[1.5px] ${item.veg ? 'border-emerald-500' : 'border-rose-500'} flex items-center justify-center bg-white/95 shadow-sm`}>
+                        {item.veg ? (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        ) : (
+                          <svg className="w-2 h-2 fill-rose-500" viewBox="0 0 12 12">
+                            <polygon points="6,1 11,10 1,10" />
+                          </svg>
+                        )}
                       </div>
+                      {inOrder && (
+                        <span className="absolute top-1.5 right-1.5 z-20 px-1.5 py-0.5 rounded-md bg-primary text-white text-[9px] font-black uppercase shadow-md">In Order</span>
+                      )}
+                      {/* Dish Description Popup — overlay on hover only (no layout shift) */}
+                      <div className="absolute inset-0 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-3 pt-8">
+                          <p className="text-[11px] leading-snug text-white font-medium line-clamp-4">
+                            {getItemIngredientInfo(item).description}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card Top Row: Category Avatar + Details Button */}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${inOrder ? 'bg-primary text-white' : 'bg-orange-50 text-orange-600 group-hover:bg-primary group-hover:text-white'} transition-colors shadow-2xs`}>
+                        <IC className="w-3.5 h-3.5" />
+                      </div>
+
+                      {/* Info / Ingredients Trigger Button */}
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setSelectedDetailItem(item) }}
-                        className="p-1 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors"
+                        className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-orange-100 text-slate-400 hover:text-orange-600 flex items-center justify-center transition-colors"
                         title="View Details & Ingredients"
                       >
                         <Info className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <p className="font-semibold text-sm text-secondary mb-1 leading-tight">{item.name}</p>
-                    <p className="text-primary font-bold">₹{item.price}</p>
-                  </button>
+
+                    {/* Dish Title */}
+                    <h4 className="font-bold text-sm text-slate-900 group-hover:text-primary transition-colors line-clamp-2 leading-tight mb-2">
+                      {item.name}
+                    </h4>
+
+                    {/* Card Bottom Row: Price + Add/Stepper Button */}
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 mt-auto">
+                      <span className="text-primary font-black text-sm tabular-nums">
+                        ₹{Number(item.price).toFixed(2)}
+                      </span>
+
+                      {inOrder ? (
+                        <div className="flex items-center gap-1 bg-primary text-white rounded-lg px-1.5 py-0.5" onClick={(e) => e.stopPropagation()}>
+                          <button onClick={() => updateQty(item.id, -1)} className="w-5 h-5 flex items-center justify-center font-bold hover:bg-primary-dark rounded">-</button>
+                          <span className="text-xs font-bold px-1 tabular-nums">{inOrder.qty}</span>
+                          <button onClick={() => updateQty(item.id, 1)} className="w-5 h-5 flex items-center justify-center font-bold hover:bg-primary-dark rounded">+</button>
+                        </div>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-lg bg-slate-100 group-hover:bg-primary group-hover:text-white text-slate-700 text-xs font-bold transition-all shadow-2xs flex items-center gap-1">
+                          + ADD
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 )
               })}
             </div>
           </div>
         </div>
 
-        <div className={`${showCart ? 'fixed inset-0 z-[80] flex flex-col' : 'hidden'} lg:relative lg:flex lg:w-[420px] lg:border-l bg-white border-l border-gray-200 flex-col`}>
-          <button onClick={() => setShowCart(false)} className="lg:hidden flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200 text-sm font-semibold text-gray-600">
+        <div className={`${showCart ? 'fixed inset-0 z-[80] flex flex-col' : 'hidden'} lg:relative lg:flex lg:w-[420px] lg:border-l bg-white/95 backdrop-blur-md border-l border-slate-200/80 flex-col text-slate-800 shadow-2xl shadow-slate-900/10`}>
+          {/* Mobile Cart Header */}
+          <button onClick={() => setShowCart(false)} className="lg:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 text-sm font-semibold text-slate-700">
             <span>Cart</span>
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5 text-slate-400" />
           </button>
+
+          {/* Table Header Badge */}
           {selectedTable && (
-            <div className="px-4 py-2 bg-primary/5 border-b border-gray-200 flex items-center justify-between">
-              <span className="text-sm font-semibold text-primary">Table {selectedTable}</span>
+            <div className="px-4 py-2.5 bg-white/80 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-sm font-bold text-amber-600 font-mono tracking-wide">Table {selectedTable}</span>
+              </div>
               <button onClick={() => {
                 if (orderItems.length > 0) setTableOrders((prev) => ({ ...prev, [selectedTable]: { items: orderItems, discount } }))
                 setSelectedTable(null)
@@ -2323,108 +2459,118 @@ Rules:
                 setDiscount({ type: 'percent', value: 0 })
                 setPaymentConfirmed(false)
                 setPaymentMethod('')
-              }} className="text-gray-400 hover:text-red-500"><X className="w-4 h-4" /></button>
+              }} className="text-slate-400 hover:text-rose-500 p-1 transition-colors"><X className="w-4 h-4" /></button>
             </div>
           )}
 
+          {/* Active KOTs Bar */}
           {selectedTable && activeKots.length > 0 && (
-            <div className="border-b border-gray-200">
-              <div className="px-4 py-2 bg-orange-50 flex items-center justify-between">
-                <span className="text-xs font-bold text-orange-600 uppercase tracking-wide">Active Orders — Table {selectedTable}</span>
-                <span className="text-xs font-semibold text-orange-500">₹{activeKotsTotal.toFixed(2)}</span>
+            <div className="border-b border-slate-200 bg-white/70">
+              <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-amber-600 uppercase tracking-widest flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>
+                  Active KOTs — Table {selectedTable}
+                </span>
+                <span className="text-xs font-bold text-amber-600 tabular-nums">₹{activeKotsTotal.toFixed(2)}</span>
               </div>
-              <div className="px-4 py-2 space-y-2 max-h-48 overflow-y-auto scrollbar-hide">
+              <div className="px-3 py-2 space-y-1.5 max-h-44 overflow-y-auto scrollbar-hide">
                 {activeKots.map((kot) => {
                   const kotTotal = kot.items.reduce((s, i) => s + i.price * i.qty, 0)
-                  const statusColor = kot.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : kot.status === 'preparing' ? 'bg-blue/10 text-blue' : 'bg-green/10 text-green'
+                  const statusColor = kot.status === 'pending' ? 'bg-amber-100 text-amber-700 border-amber-300' : kot.status === 'preparing' ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-emerald-50 text-emerald-700 border-emerald-300'
                   return (
-                    <div key={kot.id} className="flex items-center gap-2 p-2 bg-white border border-gray-100 rounded-xl text-sm">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${statusColor}`}>{kot.status}</span>
+                    <div key={kot.id} className="flex items-center gap-2 p-2 bg-white border border-slate-200 rounded-xl text-xs shadow-sm">
+                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase border ${statusColor}`}>{kot.status}</span>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-secondary truncate">{kot.items.map((i) => i.name).join(', ')}</p>
-                        <p className="text-[10px] text-gray-400">{kot.items.length} items • {new Date(kot.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
+                        <p className="font-medium text-slate-700 truncate">{kot.items.map((i) => i.name).join(', ')}</p>
+                        <p className="text-[10px] text-slate-400 tabular-nums">{kot.items.length} items • {new Date(kot.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
                       </div>
-                      <span className="font-bold text-secondary whitespace-nowrap">₹{kotTotal.toFixed(0)}</span>
-                      <button onClick={() => loadKOT(kot)} className="px-2 py-1 bg-primary/10 text-primary rounded-lg text-[10px] font-bold hover:bg-primary/20 transition-colors whitespace-nowrap">Load</button>
+                      <span className="font-bold text-slate-700 tabular-nums whitespace-nowrap">₹{kotTotal.toFixed(0)}</span>
+                      <button onClick={() => loadKOT(kot)} className="px-2 py-1 bg-amber-100 text-amber-700 rounded-lg text-[10px] font-bold hover:bg-amber-200 transition-colors whitespace-nowrap border border-amber-300">Load</button>
                     </div>
                   )
                 })}
               </div>
-              <div className="px-4 py-2 border-t border-gray-100">
-                <p className="text-[10px] text-gray-400 text-center">Tap Load to add KOT items to current order</p>
+              <div className="px-4 py-1.5 bg-white border-t border-slate-100">
+                <p className="text-[10px] text-slate-400 text-center">Tap Load to add KOT items to current order</p>
               </div>
             </div>
           )}
 
-          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+          {/* Current Order Title */}
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-white/90 backdrop-blur-md">
             <div className="flex items-center gap-2">
-              <ShoppingBag className="w-5 h-5 text-primary" />
-              <h2 className="font-bold text-lg text-secondary">Current Order</h2>
+              <div className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
+                <ShoppingBag className="w-4 h-4 text-amber-600" />
+              </div>
+              <h2 className="font-textured-header text-lg tracking-tight">Current Order</h2>
             </div>
-            <span className="text-sm text-gray-500">{orderItems.length} items</span>
+            <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200">{orderItems.length} items</span>
           </div>
-          <div className="flex-1 overflow-y-auto scrollbar-hide" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+
+          {/* Order Items List */}
+          <div className="flex-1 overflow-y-auto scrollbar-hide p-3" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
             {orderItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-gray-400 p-8">
-                <ShoppingBag className="w-16 h-16 mb-4 opacity-30" />
-                <p className="font-medium">No items in order</p>
-                <p className="text-sm">Click "New Order" to start</p>
+              <div className="flex flex-col items-center justify-center h-full text-slate-400 p-8 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-3">
+                  <ShoppingBag className="w-8 h-8 opacity-40 text-slate-400" />
+                </div>
+                <p className="font-semibold text-slate-500 text-sm">No items in order</p>
+                <p className="text-xs text-slate-400 mt-1">Select items from the menu to build order</p>
               </div>
             ) : (
-              <div className="p-4 space-y-3">
+              <div className="space-y-2">
                 {orderItems.map((item) => (
-                  <div key={item.id} className="bg-gray-50 rounded-xl p-3">
+                  <div key={item.id} className="bg-white hover:bg-slate-50 border border-slate-200 rounded-xl p-3 transition-all duration-200 shadow-sm">
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <div className={`w-2.5 h-2.5 rounded-sm border-[1.5px] ${item.veg ? 'border-green' : 'border-red-500'}`}>
-                          <div className={`w-1 h-1 mx-auto mt-[1px] ${item.veg ? 'bg-green rounded-full' : 'bg-red-500'}`} style={!item.veg ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></div>
+                        <div className={`w-2.5 h-2.5 rounded-xs border-[1.5px] ${item.veg ? 'border-emerald-500' : 'border-rose-500'} flex-shrink-0`}>
+                          <div className={`w-1 h-1 mx-auto mt-[1px] ${item.veg ? 'bg-emerald-500 rounded-full' : 'bg-rose-500'}`} style={!item.veg ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></div>
                         </div>
                         <div>
-                          <p className="font-semibold text-sm text-secondary">{item.name}</p>
-                          <p className="text-xs text-gray-500">₹{item.price} each</p>
+                          <p className="font-semibold text-sm text-slate-800 leading-tight">{item.name}</p>
+                          <p className="text-[11px] text-slate-400 tabular-nums">₹{item.price} each</p>
                         </div>
                       </div>
-                      <button onClick={() => removeItem(item.id)} className="text-gray-400 hover:text-red-500 p-1">
+                      <button onClick={() => removeItem(item.id)} className="text-slate-400 hover:text-rose-500 p-1 transition-colors">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between pt-1">
                       <div className="flex items-center gap-2">
-                        <button onClick={() => updateQty(item.id, -1)} className="w-8 h-8 bg-white border border-gray-300 rounded-lg flex items-center justify-center hover:bg-gray-100">
+                        <button onClick={() => updateQty(item.id, -1)} className="w-6 h-6 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg flex items-center justify-center text-slate-600 active:scale-95 transition-all">
                           <Minus className="w-3 h-3" />
                         </button>
-                        <span className="w-8 text-center font-bold text-secondary">{item.qty}</span>
-                        <button onClick={() => updateQty(item.id, 1)} className="w-8 h-8 bg-white border border-gray-300 rounded-lg flex items-center justify-center hover:bg-gray-100">
+                        <span className="w-6 text-center font-bold text-slate-800 text-xs tabular-nums">{item.qty}</span>
+                        <button onClick={() => updateQty(item.id, 1)} className="w-6 h-6 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg flex items-center justify-center text-slate-600 active:scale-95 transition-all">
                           <Plus className="w-3 h-3" />
                         </button>
                       </div>
-                      <p className="font-bold text-secondary">₹{item.price * item.qty}</p>
+                      <p className="font-bold text-amber-600 tabular-nums text-sm">₹{(item.price * item.qty).toFixed(2)}</p>
                     </div>
                   </div>
                 ))}
+
+                {/* Customer Info Card */}
                 {activeCustomer && (
-                  <div className="px-4 py-3 bg-primary/[0.03] rounded-xl">
+                  <div className="px-3.5 py-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 bg-green/10 rounded-lg flex items-center justify-center"><Check className="w-3.5 h-3.5 text-green" /></div>
-                        <span className="text-xs font-bold text-green uppercase tracking-wider">Customer</span>
+                        <div className="w-6 h-6 bg-emerald-500/15 rounded-lg flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-600" /></div>
+                        <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Customer Linked</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 px-3 py-2 mt-2 bg-green/5 border border-green/20 rounded-xl">
-                      <span className="text-sm font-bold text-green truncate">{activeCustomer.name || activeCustomer.phone}</span>
-                      {activeCustomer.phone && <span className="text-xs text-gray-400">{activeCustomer.phone}</span>}
-                      {checkBday(activeCustomer.dob) && (
-                        <span className="px-2 py-0.5 bg-pink-100 text-pink-600 text-[10px] font-bold rounded-full">Birthday!</span>
-                      )}
+                    <div className="flex items-center justify-between px-3 py-2 bg-white border border-emerald-200 rounded-lg">
+                      <span className="text-xs font-bold text-emerald-600 truncate">{activeCustomer.name || activeCustomer.phone}</span>
+                      {activeCustomer.phone && <span className="text-[11px] text-slate-500 tabular-nums">{activeCustomer.phone}</span>}
                     </div>
                     {checkBday(activeCustomer.dob) && (
-                      <div className="flex items-center gap-1.5 px-3 py-2 mt-2 bg-pink-50 border border-pink-100 rounded-xl">
+                      <div className="flex items-center gap-1.5 px-3 py-2 bg-pink-50 border border-pink-200 rounded-lg">
                         <span className="text-[11px] text-pink-600 font-semibold mr-1">Birthday discount:</span>
                         {[0, 5, 10, 15].map((pct) => (
                           <button
                             key={pct}
                             onClick={() => setDiscount({ type: 'percent', value: pct })}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors ${
                               (pct === 0 && discount.value === 0 && discount.type === 'percent') || (pct > 0 && discount.value === pct && discount.type === 'percent')
                                 ? 'bg-pink-500 text-white border-pink-500'
                                 : 'bg-white text-pink-600 border-pink-200 hover:border-pink-400'
@@ -2437,24 +2583,31 @@ Rules:
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Footer Summary & Payment Buttons */}
+            <div className="mt-3 pt-3 border-t border-slate-200 space-y-3">
+            {orderItems.length > 0 && (
+              <>
                 {!showDiscount ? (
-                  <button onClick={() => setShowDiscount(true)} className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium text-primary hover:bg-primary/5 rounded-lg transition-colors">
-                    <Percent className="w-4 h-4" />
+                  <button onClick={() => setShowDiscount(true)} className="w-full flex items-center justify-center gap-2 py-1.5 text-xs font-semibold text-amber-600 hover:bg-amber-50 rounded-lg transition-colors">
+                    <Percent className="w-3.5 h-3.5" />
                     Apply Discount
                   </button>
                 ) : (
-                  <div className="bg-gray-50 rounded-xl p-3 space-y-3">
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-secondary">Discount</span>
+                      <span className="text-xs font-semibold text-slate-600">Discount Config</span>
                       <button onClick={() => { setShowDiscount(false); setDiscount({ type: 'percent', value: 0 }) }}>
-                        <X className="w-4 h-4 text-gray-400" />
+                        <X className="w-4 h-4 text-slate-400 hover:text-slate-600" />
                       </button>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => setDiscount((d) => ({ ...d, type: 'percent' }))} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${discount.type === 'percent' ? 'bg-primary text-white' : 'bg-white border border-gray-300'}`}>
+                      <button onClick={() => setDiscount((d) => ({ ...d, type: 'percent' }))} className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${discount.type === 'percent' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-500 border border-slate-200'}`}>
                         % Percent
                       </button>
-                      <button onClick={() => setDiscount((d) => ({ ...d, type: 'flat' }))} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${discount.type === 'flat' ? 'bg-primary text-white' : 'bg-white border border-gray-300'}`}>
+                      <button onClick={() => setDiscount((d) => ({ ...d, type: 'flat' }))} className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${discount.type === 'flat' ? 'bg-amber-500 text-slate-950' : 'bg-white text-slate-500 border border-slate-200'}`}>
                         ₹ Flat
                       </button>
                     </div>
@@ -2465,67 +2618,74 @@ Rules:
                         placeholder={discount.type === 'percent' ? 'e.g. 10' : 'e.g. 50'}
                         value={discount.value || ''}
                         onChange={(e) => setDiscount((d) => ({ ...d, value: Number(e.target.value) }))}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                        className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-amber-500 text-slate-800 tabular-nums"
                       />
-                      <button onClick={() => setShowDiscount(false)} className="bg-green text-white px-4 py-2 rounded-lg text-sm font-semibold">Apply</button>
+                      <button onClick={() => setShowDiscount(false)} className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">Apply</button>
                     </div>
                   </div>
                 )}
-                <div className="bg-gray-50 rounded-xl p-3 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Subtotal</span>
-                    <span className="font-medium">₹{subtotal.toFixed(2)}</span>
+
+                {/* Subtotal & Tax Summary Box */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-500">
+                    <span>Subtotal</span>
+                    <span className="font-semibold text-slate-700 tabular-nums">₹{subtotal.toFixed(2)}</span>
                   </div>
                   {discountAmount > 0 && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-green font-medium">Discount ({discount.type === 'percent' ? `${discount.value}%` : `₹${discount.value}`})</span>
-                      <span className="text-green font-medium">-₹{discountAmount.toFixed(2)}</span>
+                    <div className="flex justify-between text-emerald-600">
+                      <span>Discount ({discount.type === 'percent' ? `${discount.value}%` : `₹${discount.value}`})</span>
+                      <span className="font-bold tabular-nums">-₹{discountAmount.toFixed(2)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">CGST (2.5%)</span>
-                    <span className="font-medium">₹{cgst.toFixed(2)}</span>
+                  <div className="flex justify-between text-slate-500">
+                    <span>CGST (2.5%)</span>
+                    <span className="font-semibold text-slate-700 tabular-nums">₹{cgst.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">SGST (2.5%)</span>
-                    <span className="font-medium">₹{sgst.toFixed(2)}</span>
+                  <div className="flex justify-between text-slate-500">
+                    <span>SGST (2.5%)</span>
+                    <span className="font-semibold text-slate-700 tabular-nums">₹{sgst.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-300">
-                    <span>Total</span>
-                    <span className="text-primary">₹{total.toFixed(2)}</span>
+                  <div className="flex justify-between text-base font-black pt-2 border-t border-slate-200 text-slate-900">
+                    <span>Total Bill</span>
+                    <span className="text-amber-600 tabular-nums">₹{total.toFixed(2)}</span>
                   </div>
                 </div>
+
                 <input
                   type="text"
                   placeholder="ORDER NOTES (OPTIONAL)"
                   value={kotNotes}
                   onChange={(e) => setKotNotes(e.target.value.toUpperCase())}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-primary/30 bg-gray-50 uppercase tracking-wide"
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:border-amber-500 text-slate-700 uppercase tracking-wide placeholder:text-slate-400"
                 />
-                <button onClick={generateKOT} disabled={orderItems.length === 0} className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-secondary to-gray-800 text-white font-semibold rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-gray-300/50 transition-all duration-200 active:scale-[0.97]">
-                  <ChefHat className="w-4 h-4" />
+
+                <button onClick={generateKOT} disabled={orderItems.length === 0} className="w-full flex items-center justify-center gap-2 py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-white font-bold rounded-xl text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 active:scale-[0.97]">
+                  <ChefHat className="w-4 h-4 text-amber-500" />
                   Generate KOT
                 </button>
+
                 <div className="grid grid-cols-3 gap-2">
-                  <button onClick={() => { setPaymentMethod('cash'); setShowPayment(true) }} disabled={orderItems.length === 0 || paymentConfirmed} className="flex flex-col items-center gap-1 py-3 bg-green/10 text-green font-medium rounded-xl disabled:opacity-40 hover:bg-green/20 transition-all duration-200 active:scale-95">
-                    <Banknote className="w-5 h-5" />
-                    <span className="text-xs">Cash</span>
+                  <button onClick={() => { setPaymentMethod('cash'); setShowPayment(true) }} disabled={orderItems.length === 0 || paymentConfirmed} className="flex flex-col items-center gap-1 py-2 bg-emerald-50 border border-emerald-200 text-emerald-600 font-bold rounded-xl disabled:opacity-30 hover:bg-emerald-100 transition-all duration-200 active:scale-95">
+                    <Banknote className="w-4 h-4" />
+                    <span className="text-[11px]">Cash</span>
                   </button>
-                  <button onClick={() => { setPaymentMethod('upi'); setPaymentConfirmed(true); setShowUpiQr(true) }} disabled={orderItems.length === 0 || paymentConfirmed} className="flex flex-col items-center gap-1 py-3 bg-blue/10 text-blue font-medium rounded-xl disabled:opacity-40 hover:bg-blue/20 transition-all duration-200 active:scale-95">
-                    <QrCode className="w-5 h-5" />
-                    <span className="text-xs">UPI</span>
+                  <button onClick={() => { setPaymentMethod('upi'); setPaymentConfirmed(true); setShowUpiQr(true) }} disabled={orderItems.length === 0 || paymentConfirmed} className="flex flex-col items-center gap-1 py-2 bg-blue-50 border border-blue-200 text-blue-600 font-bold rounded-xl disabled:opacity-30 hover:bg-blue-100 transition-all duration-200 active:scale-95">
+                    <QrCode className="w-4 h-4" />
+                    <span className="text-[11px]">UPI</span>
                   </button>
-                  <button onClick={() => { setPaymentMethod('card'); setShowPayment(true) }} disabled={orderItems.length === 0 || paymentConfirmed} className="flex flex-col items-center gap-1 py-3 bg-purple/10 text-purple font-medium rounded-xl disabled:opacity-40 hover:bg-purple/20 transition-all duration-200 active:scale-95">
-                    <CreditCard className="w-5 h-5" />
-                    <span className="text-xs">Card</span>
+                  <button onClick={() => { setPaymentMethod('card'); setShowPayment(true) }} disabled={orderItems.length === 0 || paymentConfirmed} className="flex flex-col items-center gap-1 py-2 bg-purple-50 border border-purple-200 text-purple-600 font-bold rounded-xl disabled:opacity-30 hover:bg-purple-100 transition-all duration-200 active:scale-95">
+                    <CreditCard className="w-4 h-4" />
+                    <span className="text-[11px]">Card</span>
                   </button>
                 </div>
-                <button onClick={generateBill} disabled={orderItems.length === 0 || !paymentConfirmed} className={`w-full flex items-center justify-center gap-2 py-3 font-semibold rounded-xl transition-all duration-200 active:scale-[0.97] ${paymentConfirmed ? 'bg-gradient-to-r from-green to-emerald-500 text-white hover:shadow-lg hover:shadow-green/25' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+
+                <button onClick={generateBill} disabled={orderItems.length === 0 || !paymentConfirmed} className={`w-full flex items-center justify-center gap-2 py-3 font-bold text-xs rounded-xl transition-all duration-200 active:scale-[0.97] ${paymentConfirmed ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-black shadow-lg shadow-emerald-500/20 hover:brightness-110' : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'}`}>
                   <Receipt className="w-4 h-4" />
-                  {paymentConfirmed ? 'Generate Bill' : 'Complete Payment First'}
+                  {paymentConfirmed ? 'Print Bill Receipt' : 'Complete Payment First'}
                 </button>
-              </div>
+              </>
             )}
+            </div>
           </div>
         </div>
       </div>
@@ -2544,17 +2704,18 @@ Rules:
 
       {/* Table Selection Modal */}
       {showTableModal && (
-        <div className="fixed inset-0 bg-black/50 z-[90] flex items-end sm:items-center justify-center p-4">
-          <div className="bg-white rounded-3xl sm:rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col animate-fade-up">
+        <div className="fixed inset-0 modal-backdrop z-[90] flex items-end sm:items-center justify-center p-4">
+          <div className="modal-card w-full max-w-lg max-h-[90vh] flex flex-col sm:rounded-[1.25rem] rounded-t-3xl">
+            <div className="accent-line" />
             {/* Header */}
-            <div className="px-5 pt-5 pb-4 border-b border-gray-100 flex-shrink-0">
+            <div className="modal-header px-5 pt-5 pb-4 flex-shrink-0 !border-b-0">
               <div className="flex items-center justify-between mb-3">
                 <div>
-                  <h3 className="text-lg font-bold text-secondary">Select Table</h3>
+                  <h3 className="modal-title text-lg">Select Table</h3>
                   <p className="text-xs text-gray-400 mt-0.5">{tables.length} tables · {tables.filter((t) => isTableOccupied(t.id)).length} occupied</p>
                 </div>
-                <button onClick={() => setShowTableModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition-colors">
-                  <X className="w-4 h-4 text-gray-500" />
+                <button onClick={() => setShowTableModal(false)} className="modal-close">
+                  <X className="w-4 h-4" />
                 </button>
               </div>
               {/* Legend */}
@@ -2567,18 +2728,19 @@ Rules:
             </div>
 
             {/* Scrollable Tables Grid */}
-            <div className="flex-1 overflow-y-auto p-5 scrollbar-hide">
+            <div className="flex-1 overflow-y-auto p-5 premium-scroll">
               <div className="grid grid-cols-3 gap-3">
                 {/* Parcel / Takeaway Button */}
                 <button
                   onClick={() => { setNewOrderType('parcel'); setShowNewOrderModal(true); setShowTableModal(false) }}
-                  className={`relative p-4 rounded-2xl text-center border-2 transition-all col-span-3 ${
+                  className={`group relative p-4 rounded-2xl text-center border-2 transition-all col-span-3 ${
                     !selectedTable
                       ? 'border-green bg-green/5 shadow-sm shadow-green/10'
                       : 'border-gray-200 hover:border-green/40 hover:bg-green/5'
                   }`}
                 >
-                  <div className="flex items-center justify-center gap-3">
+                  <span className="shine-layer" aria-hidden="true" />
+                  <div className="flex items-center justify-center gap-3 relative z-10">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${!selectedTable ? 'bg-green/10' : 'bg-gray-100'}`}>
                       <ShoppingBag className={`w-5 h-5 ${!selectedTable ? 'text-green' : 'text-gray-400'}`} />
                     </div>
@@ -2665,12 +2827,14 @@ Rules:
 
       {/* Merge/Split Modal */}
       {showMergeSplit && (
-        <div className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-xl p-6 animate-fade-up">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold text-secondary">Merge / Split Tables</h3>
-              <button onClick={() => { setShowMergeSplit(false); setSelectedTablesForMerge([]); setSplitItemTargets({}) }}><X className="w-6 h-6 text-gray-400" /></button>
+        <div className="fixed inset-0 modal-backdrop z-[90] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-xl p-0">
+            <div className="accent-line" />
+            <div className="modal-header flex items-center justify-between px-6 py-4">
+              <h3 className="modal-title text-xl">Merge / Split Tables</h3>
+              <button onClick={() => { setShowMergeSplit(false); setSelectedTablesForMerge([]); setSplitItemTargets({}) }} className="modal-close"><X className="w-5 h-5" /></button>
             </div>
+            <div className="p-6">
 
             <div className="flex gap-2 mb-5">
               <button onClick={() => setMergeSplitTab('merge')} className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${mergeSplitTab === 'merge' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
@@ -2837,14 +3001,15 @@ Rules:
                 )}
               </>
             )}
+            </div>
           </div>
         </div>
       )}
 
       {/* Payment Confirmation Modal */}
       {showPayment && (
-        <div className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 animate-fade-up text-center">
+        <div className="fixed inset-0 modal-backdrop z-[90] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-md p-6 text-center">
             <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${paymentMethod === 'cash' ? 'bg-green/10' : paymentMethod === 'upi' ? 'bg-blue/10' : 'bg-purple/10'}`}>
               {paymentMethod === 'cash' && <Banknote className="w-8 h-8 text-green" />}
               {paymentMethod === 'upi' && <QrCode className="w-8 h-8 text-blue" />}
@@ -2960,8 +3125,8 @@ Rules:
 
       {/* Customer Capture Modal — shown on Generate Bill */}
       {showCustModal && (
-        <div className="fixed inset-0 bg-black/50 z-[95] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden animate-fade-up">
+        <div className="fixed inset-0 modal-backdrop z-[95] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-sm overflow-hidden">
             <div className="bg-gradient-to-r from-primary to-primary/80 p-5 text-center">
               <Receipt className="w-8 h-8 text-white mx-auto mb-2" />
               <h3 className="text-lg font-bold text-white">Customer Details</h3>
@@ -3103,17 +3268,18 @@ Rules:
 
       {/* ═══════ RESTAURANT PROFILE MODAL ═══════ */}
       {showProfileModal && (
-        <div className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col animate-fade-up">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-bold text-secondary flex items-center gap-2">
-                <User className="w-5 h-5 text-primary" />
+        <div className="fixed inset-0 modal-backdrop z-[90] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-md max-h-[85vh] flex flex-col">
+            <div className="accent-line" />
+            <div className="modal-header flex items-center justify-between px-6 py-4">
+              <h3 className="modal-title text-lg flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><User className="w-4 h-4 text-primary" /></div>
                 Restaurant Details
               </h3>
-              <button onClick={() => setShowProfileModal(false)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
+              <button onClick={() => setShowProfileModal(false)} className="modal-close"><X className="w-5 h-5" /></button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 premium-scroll">
               <div className="flex flex-col items-center">
                 {(userProfile?.profilePic || currentUser.photoURL) ? (
                   <img src={userProfile?.profilePic || currentUser.photoURL} alt="Logo" className="w-20 h-20 rounded-2xl object-cover border-2 border-primary/20 mb-3" />
@@ -3209,38 +3375,41 @@ Rules:
 
       {/* ═══════ UPI SETTINGS MODAL ═══════ */}
       {showUpiModal && (
-        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6 animate-fade-up">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-xl font-bold text-secondary flex items-center gap-2">
-                <QrCode className="w-5 h-5 text-blue" />
+        <div className="fixed inset-0 modal-backdrop z-[90] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-sm p-0">
+            <div className="accent-line" />
+            <div className="modal-header flex items-center justify-between px-6 py-4">
+              <h3 className="modal-title text-lg flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue/10 flex items-center justify-center"><QrCode className="w-4 h-4 text-blue" /></div>
                 UPI Settings
               </h3>
-              <button onClick={() => setShowUpiModal(false)}><X className="w-6 h-6 text-gray-400" /></button>
+              <button onClick={() => setShowUpiModal(false)} className="modal-close"><X className="w-5 h-5" /></button>
             </div>
-            <p className="text-sm text-gray-500 mb-4">Enter your UPI ID to generate QR codes for customers.</p>
-            <div className="mb-4">
-              <label className="block text-[11px] font-semibold text-gray-400 mb-1.5 uppercase">UPI ID</label>
-              <input
-                type="text"
-                placeholder="e.g. restaurant@upi"
-                value={upiInput}
-                onChange={(e) => setUpiInput(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm font-semibold outline-none focus:border-blue focus:ring-2 focus:ring-blue/20 transition-colors"
-                autoFocus
-              />
-            </div>
-            {upiId && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-green/5 border border-green/20 rounded-xl mb-4">
-                <Check className="w-4 h-4 text-green flex-shrink-0" />
-                <span className="text-xs font-medium text-green">Current: {upiId}</span>
+            <div className="p-6">
+              <p className="text-sm text-gray-500 mb-4">Enter your UPI ID to generate QR codes for customers.</p>
+              <div className="mb-4">
+                <label className="block text-[11px] font-semibold text-gray-400 mb-1.5 uppercase">UPI ID</label>
+                <input
+                  type="text"
+                  placeholder="e.g. restaurant@upi"
+                  value={upiInput}
+                  onChange={(e) => setUpiInput(e.target.value)}
+                  className="input-premium font-semibold focus:border-blue focus:ring-2 focus:ring-blue/20"
+                  autoFocus
+                />
               </div>
-            )}
-            <div className="flex gap-3">
-              <button onClick={() => setShowUpiModal(false)} className="flex-1 py-3 border border-gray-300 rounded-xl font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-              <button onClick={handleSaveUpi} disabled={!upiInput.trim() || upiSaving} className="flex-1 py-3 bg-blue text-white rounded-xl font-semibold hover:bg-blue/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                {upiSaving ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Save'}
-              </button>
+              {upiId && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-green/5 border border-green/20 rounded-xl mb-4">
+                  <Check className="w-4 h-4 text-green flex-shrink-0" />
+                  <span className="text-xs font-medium text-green">Current: {upiId}</span>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button onClick={() => setShowUpiModal(false)} className="btn-premium flex-1 py-3 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
+                <button onClick={handleSaveUpi} disabled={!upiInput.trim() || upiSaving} className="btn-premium flex-1 py-3 bg-blue text-white rounded-xl hover:bg-blue/90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                  {upiSaving ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Save'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -3248,73 +3417,40 @@ Rules:
 
       {/* ═══════ MANAGE MENU MODAL ═══════ */}
       {showMenuManager && (
-        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-fade-up">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-xl font-bold text-secondary flex items-center gap-2">
-                <Settings className="w-5 h-5 text-primary" />
+        <div className="fixed inset-0 modal-backdrop z-[100] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="accent-line" />
+            <div className="modal-header flex items-center justify-between px-6 py-4">
+              <h3 className="modal-title text-xl flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center"><Settings className="w-4.5 h-4.5 text-primary" /></div>
                 Manage Menu
               </h3>
               <div className="flex items-center gap-3">
-                {menuSaving && <span className="text-xs text-gray-400 animate-pulse">Saving...</span>}
-                <button onClick={() => setShowMenuManager(false)}><X className="w-6 h-6 text-gray-400 hover:text-gray-600" /></button>
+                {menuSaving && <span className="text-xs text-primary/70 animate-pulse font-medium">Saving...</span>}
+                <button onClick={() => setShowMenuManager(false)} className="modal-close"><X className="w-5 h-5" /></button>
               </div>
             </div>
 
-            <div className="px-6 pt-4">
-              <label className="relative block overflow-hidden rounded-2xl cursor-pointer group">
+            <div className="px-6 pt-4 flex gap-2">
+              <label className="relative flex-1 block overflow-hidden rounded-xl cursor-pointer group">
                 <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={handleMenuCardUpload} disabled={menuCardUploading} />
-                <div className={`relative bg-gradient-to-br from-orange/10 via-primary/5 to-orange/10 border-2 border-dashed rounded-2xl p-6 transition-all duration-300 ${menuCardUploading ? 'border-primary/40' : 'border-orange/30 group-hover:border-primary group-hover:from-primary/10 group-hover:via-orange/10 group-hover:to-primary/10'}`}>
+                <div className={`flex items-center justify-center gap-2 p-3 border-2 border-dashed rounded-xl text-sm font-semibold transition-all duration-300 ${menuCardUploading ? 'border-primary/40 bg-primary/5 text-primary' : 'border-orange/30 text-primary bg-orange/5 group-hover:border-primary group-hover:bg-primary/5'}`}>
                   {menuCardUploading ? (
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="relative">
-                        <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center">
-                          <Loader2 className="w-7 h-7 text-primary animate-spin" />
-                        </div>
-                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange rounded-full flex items-center justify-center">
-                          <Sparkles className="w-2.5 h-2.5 text-white animate-pulse" />
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-sm font-bold text-primary">AI is reading your menu...</p>
-                        <p className="text-xs text-gray-400 mt-0.5">Uploading image & extracting items</p>
-                      </div>
-                      <div className="w-48 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-primary to-orange rounded-full animate-[shimmer_1.5s_ease-in-out_infinite]" style={{ width: '60%' }} />
-                      </div>
-                    </div>
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      AI reading menu...
+                    </>
                   ) : (
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="relative">
-                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange to-primary flex items-center justify-center shadow-lg shadow-primary/20 group-hover:shadow-primary/40 group-hover:scale-105 transition-all duration-300">
-                          <Camera className="w-7 h-7 text-white" />
-                        </div>
-                        <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-white rounded-full shadow-md flex items-center justify-center border border-gray-100 group-hover:scale-110 transition-transform">
-                          <ScanLine className="w-3.5 h-3.5 text-primary" />
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-sm font-bold text-secondary">Upload Menu Card</p>
-                        <p className="text-xs text-gray-400 mt-0.5">Snap a photo — AI extracts all items instantly</p>
-                      </div>
-                      <div className="flex items-center gap-4 text-[10px] text-gray-400">
-                        <span className="flex items-center gap-1"><Image className="w-3 h-3" /> Photo</span>
-                        <span className="flex items-center gap-1"><Zap className="w-3 h-3" /> AI Power</span>
-                        <span className="flex items-center gap-1"><Check className="w-3 h-3" /> Review</span>
-                      </div>
-                    </div>
+                    <>
+                      <Camera className="w-4 h-4" />
+                      Upload Menu Card (AI)
+                    </>
                   )}
                 </div>
               </label>
-            </div>
-
-            <div className="px-6 pb-3">
-              <button
-                onClick={() => setShowMenuCardDownload(true)}
-                className="w-full flex items-center justify-center gap-2 p-3 bg-secondary/5 border border-secondary/10 rounded-xl hover:bg-secondary/10 transition-colors group"
-              >
-                <Download className="w-4 h-4 text-secondary group-hover:text-primary transition-colors" />
-                <span className="text-sm font-semibold text-secondary">Download Menu Card</span>
+              <button onClick={() => setShowMenuCardDownload(true)} className="flex-1 flex items-center justify-center gap-2 p-3 bg-secondary/5 border border-secondary/10 rounded-xl text-sm font-semibold text-secondary hover:bg-secondary/10 hover:text-primary transition-colors group">
+                <Download className="w-4 h-4" />
+                Download Menu Card
               </button>
             </div>
 
@@ -3339,10 +3475,11 @@ Rules:
               ))}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6 premium-scroll">
               {/* Categories Tab */}
               {menuTab === 'categories' && (
                 <div className="space-y-4">
+                  <p className="text-sm font-bold text-primary flex items-center gap-1.5"><Plus className="w-4 h-4" />Add Category</p>
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -3368,6 +3505,9 @@ Rules:
                       <Plus className="w-4 h-4" />
                       Add
                     </button>
+                  </div>
+                  <div className="pt-1">
+                    <p className="text-sm font-bold text-gray-600 mb-2">Your Categories</p>
                   </div>
                   <div className="space-y-2">
                     {menuCategories.map((cat) => {
@@ -3479,10 +3619,26 @@ Rules:
               {/* Items Tab */}
               {menuTab === 'items' && (
                 <div className="space-y-4">
+                  <p className="text-sm font-bold text-primary flex items-center gap-1.5"><Plus className="w-4 h-4" />Add Item</p>
                   <div className="bg-gray-50 rounded-xl p-4 space-y-3">
                     <div className="flex gap-2">
                       <input type="text" placeholder="Item name" value={newItemName} onChange={(e) => setNewItemName(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30" />
                       <input type="number" inputMode="decimal" placeholder="Price" value={newItemPrice} onChange={(e) => setNewItemPrice(e.target.value)} className="w-24 px-3 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1.5 px-3 py-2 border border-dashed border-orange/30 rounded-xl cursor-pointer hover:border-primary text-xs font-medium text-gray-500 hover:text-primary transition-colors">
+                        <Camera className="w-4 h-4 text-primary" />
+                        {itemImageUploading ? 'Uploading...' : itemImageUrl ? 'Change photo' : 'Add photo'}
+                        <input type="file" accept="image/*" className="hidden" onChange={handleItemImageChange} disabled={itemImageUploading} />
+                      </label>
+                      {itemImageUrl && (
+                        <>
+                          <img src={itemImageUrl} alt="Item photo" className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
+                          <button onClick={() => setItemImageUrl('')} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg" title="Remove photo">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <div className="relative flex-1">
@@ -3522,7 +3678,10 @@ Rules:
                       </button>
                     </div>
                   </div>
-                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  <div className="pt-1">
+                    <p className="text-sm font-bold text-gray-600 mb-2">Your Items</p>
+                  </div>
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto premium-scroll pr-1">
                     {menuCategories.map((cat) => {
                       const catItems = menuItems.filter((i) => i.category === cat.id)
                       if (catItems.length === 0) return null
@@ -3550,6 +3709,7 @@ Rules:
               {/* Tables Tab */}
               {menuTab === 'tables' && (
                 <div className="space-y-4">
+                  <p className="text-sm font-bold text-primary flex items-center gap-1.5"><Plus className="w-4 h-4" />Add Table</p>
                   <div className="flex gap-2">
                     <input type="text" placeholder="Table name (e.g. Table 9)" value={newTableName} onChange={(e) => setNewTableName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTable()} className="flex-1 px-3 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30" />
                     <input type="number" inputMode="numeric" placeholder="Seats" value={newTableSeats} onChange={(e) => setNewTableSeats(Number(e.target.value))} className="w-24 px-3 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30" />
@@ -3557,6 +3717,9 @@ Rules:
                       <Plus className="w-4 h-4" />
                       Add
                     </button>
+                  </div>
+                  <div className="pt-1">
+                    <p className="text-sm font-bold text-gray-600 mb-2">Your Tables</p>
                   </div>
                   <div className="space-y-2">
                     {tables.map((table) => (
@@ -3602,17 +3765,151 @@ Rules:
         </div>
       )}
 
+      {/* ═══════ EDIT ITEM MODAL ═══════ */}
+      {editForm && (
+        <div className="fixed inset-0 modal-backdrop z-[120] flex items-center justify-center p-4" onClick={() => { setEditForm(null); setItemImageUrl('') }}>
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto premium-scroll p-5 space-y-4 animate-fade-up" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-secondary flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-primary" /> Edit Item
+              </h3>
+              <button onClick={() => { setEditForm(null); setItemImageUrl('') }} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Photo */}
+            <div className="flex items-center gap-3">
+              {itemImageUrl ? (
+                <img src={itemImageUrl} alt="Item photo" className="w-16 h-16 rounded-xl object-cover border border-gray-200 shadow-2xs" />
+              ) : (
+                <div className="w-16 h-16 rounded-xl bg-gray-100 border border-dashed border-gray-300 flex items-center justify-center text-gray-400 flex-shrink-0">
+                  <Image className="w-6 h-6" />
+                </div>
+              )}
+              <div className="flex flex-col gap-1.5">
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-orange/30 rounded-lg cursor-pointer hover:border-primary text-xs font-semibold text-gray-600 hover:text-primary transition-colors">
+                  <Camera className="w-3.5 h-3.5 text-primary" />
+                  {itemImageUploading ? 'Uploading...' : itemImageUrl ? 'Change photo' : 'Upload photo'}
+                  <input type="file" accept="image/*" className="hidden" onChange={handleItemImageChange} disabled={itemImageUploading} />
+                </label>
+                {itemImageUrl && (
+                  <button onClick={() => setItemImageUrl('')} className="inline-flex items-center gap-1 text-xs text-red-400 hover:text-red-600 font-medium">
+                    <Trash2 className="w-3 h-3" /> Remove photo
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Name */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Item name</label>
+              <input
+                type="text"
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            {/* Price + Type */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Price (₹)</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={editForm.price}
+                  onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Type</label>
+                <div className="flex gap-1 p-1 bg-gray-100 rounded-xl">
+                  <button
+                    onClick={() => setEditForm({ ...editForm, veg: true })}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors ${editForm.veg ? 'bg-green text-white shadow-sm' : 'text-gray-500'}`}
+                  >
+                    Veg
+                  </button>
+                  <button
+                    onClick={() => setEditForm({ ...editForm, veg: false })}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors ${!editForm.veg ? 'bg-red-500 text-white shadow-sm' : 'text-gray-500'}`}
+                  >
+                    Non-Veg
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Category + Sub-category */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Category</label>
+                <div className="relative">
+                  <select
+                    value={editForm.category}
+                    onChange={(e) => setEditForm({ ...editForm, category: e.target.value, subCategory: '' })}
+                    className="appearance-none pr-8 w-full px-3 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+                  >
+                    {menuCategories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
+              </div>
+              {(() => {
+                const cat = menuCategories.find((c) => c.id === editForm.category)
+                const subs = cat?.subCategories || []
+                if (subs.length === 0) return null
+                return (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Sub-category</label>
+                    <div className="relative">
+                      <select
+                        value={editForm.subCategory}
+                        onChange={(e) => setEditForm({ ...editForm, subCategory: e.target.value })}
+                        className="appearance-none pr-8 w-full px-3 py-2 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+                      >
+                        <option value="">None</option>
+                        {subs.map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* Save / Cancel */}
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => { setEditForm(null); setItemImageUrl('') }} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
+                Cancel
+              </button>
+              <button onClick={saveEditItem} className="flex-1 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1">
+                <Save className="w-4 h-4" /> Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══════ MENU CARD REVIEW MODAL ═══════ */}
       {showMenuCardReview && (
-        <div className="fixed inset-0 bg-black/50 z-[110] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col animate-fade-up">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-bold text-secondary flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-orange" />
+        <div className="fixed inset-0 modal-backdrop z-[110] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-lg max-h-[85vh] flex flex-col">
+            <div className="accent-line" />
+            <div className="modal-header flex items-center justify-between px-5 py-4">
+              <h3 className="modal-title text-lg flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-orange/10 flex items-center justify-center"><Sparkles className="w-4 h-4 text-orange" /></div>
                 Menu Card Review
               </h3>
-              <button onClick={() => { setShowMenuCardReview(false); setMenuCardExtracted([]); setMenuCardPreview('') }}>
-                <X className="w-5 h-5 text-gray-400 hover:text-gray-600" />
+              <button onClick={() => { setShowMenuCardReview(false); setMenuCardExtracted([]); setMenuCardPreview('') }} className="modal-close">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -3698,14 +3995,15 @@ Rules:
 
       {/* ═══════ MENU CARD DOWNLOAD MODAL ═══════ */}
       {showMenuCardDownload && (
-        <div className="fixed inset-0 bg-black/50 z-[110] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md animate-fade-up">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-bold text-secondary flex items-center gap-2">
-                <Download className="w-5 h-5 text-primary" />
+        <div className="fixed inset-0 modal-backdrop z-[110] flex items-center justify-center p-4">
+          <div className="modal-card w-full max-w-md">
+            <div className="accent-line" />
+            <div className="modal-header flex items-center justify-between px-6 py-4">
+              <h3 className="modal-title text-lg flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Download className="w-4 h-4 text-primary" /></div>
                 Download Menu Card
               </h3>
-              <button onClick={() => setShowMenuCardDownload(false)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
+              <button onClick={() => setShowMenuCardDownload(false)} className="modal-close"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-6 space-y-4">
               <p className="text-sm text-gray-500 text-center">Choose a theme for your menu card</p>
@@ -3953,12 +4251,12 @@ Rules:
 
       {/* Table QR Code Modal */}
       {showQrModal && (
-        <div className="fixed inset-0 bg-black/50 z-[95] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setShowQrModal(false)}>
-          <div className="bg-white rounded-t-3xl sm:rounded-2xl p-6 w-full max-w-sm text-center animate-fade-up shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 modal-backdrop z-[95] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setShowQrModal(false)}>
+          <div className="modal-card rounded-t-3xl sm:rounded-[1.25rem] p-6 w-full max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-1">
-              <h3 className="text-lg font-bold text-secondary">{qrTableName}</h3>
-              <button onClick={() => setShowQrModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition-colors">
-                <X className="w-4 h-4 text-gray-500" />
+              <h3 className="modal-title text-lg">{qrTableName}</h3>
+              <button onClick={() => setShowQrModal(false)} className="modal-close">
+                <X className="w-4 h-4" />
               </button>
             </div>
             <p className="text-xs text-gray-400 mb-5">Customer scans to view menu & order</p>
@@ -4020,15 +4318,16 @@ Rules:
         const suggested = suggestTable(newOrderPax, tables, occupiedIds)
 
         return (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { setShowNewOrderModal(false); resetNewOrder() }}>
-            <div className="bg-white w-full sm:max-w-md sm:rounded-[2rem] rounded-t-3xl max-h-[90vh] overflow-hidden animate-slide-up flex flex-col" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between px-5 pt-5 pb-3">
+          <div className="fixed inset-0 modal-backdrop z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { setShowNewOrderModal(false); resetNewOrder() }}>
+            <div className="modal-card w-full sm:max-w-md sm:rounded-[1.5rem] rounded-t-3xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="accent-line" />
+              <div className="modal-header flex items-center justify-between px-5 pt-5 pb-3 !border-b-0">
                 <div>
-                  <h2 className="text-xl font-bold text-secondary">New Order</h2>
+                  <h2 className="modal-title text-xl">New Order</h2>
                   <p className="text-sm text-gray-400 mt-0.5">Set up your order details</p>
                 </div>
-                <button onClick={() => { setShowNewOrderModal(false); resetNewOrder() }} className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition-colors">
-                  <X className="w-5 h-5 text-gray-500" />
+                <button onClick={() => { setShowNewOrderModal(false); resetNewOrder() }} className="modal-close">
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
@@ -4093,8 +4392,9 @@ Rules:
                     <input
                       type="text"
                       value={newOrderName}
-                      onChange={(e) => setNewOrderName(e.target.value)}
-                      placeholder="Enter customer name"
+                      onChange={(e) => setNewOrderName(e.target.value.slice(0, 15))}
+                      maxLength={15}
+                      placeholder="Enter customer name (max 15 letters)"
                       className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
                     />
                   </div>

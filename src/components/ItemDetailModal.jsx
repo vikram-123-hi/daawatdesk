@@ -1,10 +1,44 @@
-import { X, Utensils, Info, CheckCircle2, AlertTriangle, Leaf } from 'lucide-react'
-import { getItemIngredientInfo } from '../utils/itemDetailHelper'
+import { useState, useEffect } from 'react'
+import { X, Utensils, Leaf, Info } from 'lucide-react'
+import { getItemIngredientInfo, isCuratedItem, generateItemDetail } from '../utils/itemDetailHelper'
+import { DishImage } from '../utils/foodImageHelper'
+
+// Wrap onion/garlic mentions in the description with an italic + underlined highlight.
+function highlightOnionGarlic(text) {
+  if (!text) return text
+  const parts = text.split(/(onions?|garlic)/gi)
+  return parts.map((part, i) =>
+    /^(onions?|garlic)$/i.test(part) ? (
+      <span key={i} className="italic underline underline-offset-2 decoration-primary/50 font-bold">{part}</span>
+    ) : (
+      part
+    )
+  )
+}
 
 export default function ItemDetailModal({ item, onClose, onAddToCart }) {
+  const [detail, setDetail] = useState(() => (item ? getItemIngredientInfo(item) : { description: '', ingredientsList: [], hasOnionGarlic: false }))
+  const [generating, setGenerating] = useState(false)
+
+  useEffect(() => {
+    if (!item) return
+    setDetail(getItemIngredientInfo(item))
+    if (isCuratedItem(item.name)) { setGenerating(false); return }
+    setGenerating(true)
+    let cancelled = false
+    generateItemDetail(item).then((gen) => {
+      if (cancelled) return
+      if (gen && gen.description) {
+        setDetail({ description: gen.description, ingredientsList: gen.ingredientsList, hasOnionGarlic: gen.hasOnionGarlic })
+      }
+      setGenerating(false)
+    })
+    return () => { cancelled = true }
+  }, [item && (item.id + item.name)])
+
   if (!item) return null
 
-  const { description, ingredientsList, hasOnionGarlic } = getItemIngredientInfo(item)
+  const isJain = Boolean(item.veg) && !detail.hasOnionGarlic
 
   return (
     <div
@@ -18,7 +52,7 @@ export default function ItemDetailModal({ item, onClose, onAddToCart }) {
         {/* Header */}
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
               {item.veg ? (
                 <span className="w-4 h-4 rounded-[3px] border-[1.5px] border-emerald-600 flex items-center justify-center flex-shrink-0 bg-white" title="Pure Veg">
                   <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
@@ -33,6 +67,11 @@ export default function ItemDetailModal({ item, onClose, onAddToCart }) {
               <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${item.veg ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
                 {item.veg ? 'Pure Veg' : 'Non-Veg'}
               </span>
+              {isJain && (
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                  <Leaf className="w-3 h-3" /> Jain · No Onion Garlic
+                </span>
+              )}
             </div>
             <h3 className="text-xl font-extrabold text-slate-900 font-header-pro leading-tight">{item.name}</h3>
             <p className="text-base font-extrabold text-primary mt-0.5">₹{item.price}</p>
@@ -46,73 +85,63 @@ export default function ItemDetailModal({ item, onClose, onAddToCart }) {
           </button>
         </div>
 
-        {/* Item Image (if available) */}
-        {item.image && (
-          <div className="w-full h-44 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/80">
-            <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-          </div>
-        )}
+        {/* Item Photo — always shown (auto-resolved when no custom image) */}
+        <div className="w-full h-44 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/80">
+          <DishImage
+            itemName={item.name}
+            categoryId={item.category}
+            customImage={item.image}
+            alt={item.name}
+            loading="lazy"
+            className="w-full h-full object-cover"
+          />
+        </div>
 
         {/* Description */}
         <div>
-          <label className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 block mb-1">Description & Taste Notes</label>
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <label className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">About this dish</label>
+            {generating && (
+              <span className="text-[10px] font-semibold text-primary animate-pulse flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-primary animate-ping" /> Crafting description…
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-700 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200/60 font-medium">
-            {description}
+            {detail.hasOnionGarlic ? highlightOnionGarlic(detail.description) : detail.description}
           </p>
         </div>
 
-        {/* Onion & Garlic Dietary Warning Badge */}
-        {hasOnionGarlic ? (
-          <div className="bg-gradient-to-r from-amber-500/10 via-amber-400/5 to-amber-500/10 border-2 border-amber-400/80 rounded-2xl p-3.5 text-xs flex items-center gap-3">
-            <div className="w-9 h-9 bg-amber-500/20 text-amber-700 rounded-xl flex items-center justify-center text-lg shrink-0 border border-amber-300">
-              🧅🧄
-            </div>
-            <div>
-              <p className="font-extrabold italic text-amber-900 text-sm">Contains Onion & Garlic</p>
-              <p className="text-[11px] text-amber-700/90 font-medium mt-0.5">
-                Prepared with fresh <span className="font-extrabold italic underline decoration-amber-400">onions</span> & <span className="font-extrabold italic underline decoration-amber-400">garlic</span> seasonings.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-emerald-50/90 border-2 border-emerald-300/80 rounded-2xl p-3.5 text-xs flex items-center gap-3">
-            <div className="w-9 h-9 bg-emerald-100 text-emerald-700 rounded-xl flex items-center justify-center text-lg shrink-0 border border-emerald-300">
-              🌿
-            </div>
-            <div>
-              <p className="font-extrabold italic text-emerald-900 text-sm">No Onion & No Garlic (Jain Friendly)</p>
-              <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
-                Specially crafted without any onion or garlic ingredients.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Ingredients List with Highlighted Onion & Garlic */}
-        {ingredientsList.length > 0 && (
+        {/* Key Ingredients */}
+        {detail.ingredientsList.length > 0 && (
           <div>
             <label className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 block mb-2">Key Ingredients</label>
             <div className="flex flex-wrap gap-1.5">
-              {ingredientsList.map((ing, idx) => {
+              {detail.ingredientsList.map((ing, idx) => {
                 const lowerIng = ing.toLowerCase()
-                const isOnionGarlic = lowerIng.includes('onion') || lowerIng.includes('garlic') || lowerIng.includes('pyaz') || lowerIng.includes('lahsun')
-
+                const isOnionGarlic = /onion|garlic|pyaz|lahsun/.test(lowerIng)
                 return (
                   <span
                     key={idx}
-                    className={`px-3 py-1.5 rounded-xl text-xs transition-all ${
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold ${
                       isOnionGarlic
-                        ? 'bg-amber-100 text-amber-900 font-extrabold italic border-2 border-amber-400 shadow-2xs ring-1 ring-amber-400/40 animate-pulse'
-                        : 'bg-slate-100 text-slate-700 font-semibold border border-slate-200/70'
+                        ? 'bg-amber-50 text-amber-800 italic underline underline-offset-2 decoration-amber-400/70'
+                        : 'bg-slate-100 text-slate-600 border border-slate-200/70'
                     }`}
                   >
-                    {isOnionGarlic ? (lowerIng.includes('onion') ? '🧅 ' : '🧄 ') : ''}
                     {ing}
                   </span>
                 )
               })}
             </div>
           </div>
+        )}
+
+        {/* Taste note for jain items */}
+        {isJain && !generating && (
+          <p className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+            <Info className="w-3.5 h-3.5 text-emerald-500" /> Jain-friendly — prepared without onion or garlic.
+          </p>
         )}
 
         {/* Action Button (Add to Order) */}

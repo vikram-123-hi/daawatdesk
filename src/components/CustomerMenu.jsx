@@ -4,6 +4,7 @@ import { db } from '../firebase'
 import { doc, getDoc, collection, addDoc, updateDoc, deleteDoc, getDocs, query, where, onSnapshot } from 'firebase/firestore'
 import { vibrate } from '../utils/haptics'
 import ItemDetailModal from './ItemDetailModal'
+import { getDishImage, DishImage } from '../utils/foodImageHelper'
 
 const fallbackCategories = [
   {
@@ -244,66 +245,69 @@ export default function CustomerMenu() {
   }
 
   useEffect(() => {
+    let unsub = null
     let cancelled = false
 
-    async function loadMenuData() {
-      if (!uid) {
-        if (!cancelled) {
-          setRestaurant('DaawatDesk Special')
-          setRestLogo('')
-          setMenuItems(fallbackItems)
-          setMenuCategories(fallbackCategories)
-          setActiveCategory(fallbackCategories[0]?.id || '')
-          setLoading(false)
-        }
-        return
+    function applyMenuData(userData) {
+      setRestaurant(userData.restaurant || userData.name || 'DaawatDesk Restaurant')
+      setRestAddress(userData.address || '')
+      setRestPhone(userData.phone || '')
+      setRestInstagram(userData.instagram || '')
+      setRestFacebook(userData.facebook || '')
+      setRestLogo(userData.profilePic || userData.logo || userData.logoUrl || userData.avatar || '')
+
+      const menuData = userData.menuConfig
+      if (menuData?.items?.length) {
+        setMenuItems(menuData.items)
+        setMenuCategories(menuData.categories?.length ? menuData.categories : fallbackCategories)
+        setActiveCategory((prev) => {
+          if (prev && menuData.categories?.some((c) => c.id === prev)) return prev
+          return menuData.categories?.[0]?.id || fallbackCategories[0]?.id || ''
+        })
+      } else {
+        setMenuItems(fallbackItems)
+        setMenuCategories(fallbackCategories)
+        setActiveCategory(fallbackCategories[0]?.id || '')
       }
+    }
 
-      try {
-        const userSnap = await getDoc(doc(db, 'users', uid))
-        if (userSnap.exists()) {
-          const userData = userSnap.data()
-          if (!cancelled) {
-            setRestaurant(userData.restaurant || userData.name || 'DaawatDesk Restaurant')
-            setRestAddress(userData.address || '')
-            setRestPhone(userData.phone || '')
-            setRestInstagram(userData.instagram || '')
-            setRestFacebook(userData.facebook || '')
-            setRestLogo(userData.profilePic || userData.logo || userData.logoUrl || userData.avatar || '')
-
-            const menuData = userData.menuConfig
-            if (menuData?.items?.length) {
-              setMenuItems(menuData.items)
-              setMenuCategories(menuData.categories?.length ? menuData.categories : fallbackCategories)
-              setActiveCategory(menuData.categories?.[0]?.id || fallbackCategories[0]?.id || '')
-            } else {
-              setMenuItems(fallbackItems)
-              setMenuCategories(fallbackCategories)
-              setActiveCategory(fallbackCategories[0]?.id || '')
-            }
-          }
-        } else {
-          if (!cancelled) {
+    if (!uid) {
+      setRestaurant('DaawatDesk Special')
+      setRestLogo('')
+      setMenuItems(fallbackItems)
+      setMenuCategories(fallbackCategories)
+      setActiveCategory(fallbackCategories[0]?.id || '')
+      setLoading(false)
+    } else {
+      // Live subscription — reflects Manage Menu changes (images, prices, items) instantly
+      unsub = onSnapshot(
+        doc(db, 'users', uid),
+        (snap) => {
+          if (cancelled) return
+          if (snap.exists()) {
+            applyMenuData(snap.data())
+          } else {
             setRestaurant('DaawatDesk Restaurant')
             setMenuItems(fallbackItems)
             setMenuCategories(fallbackCategories)
             setActiveCategory(fallbackCategories[0]?.id || '')
           }
+          setLoading(false)
+        },
+        (err) => {
+          console.error('CustomerMenu load error:', err)
+          if (!cancelled) {
+            setRestaurant('DaawatDesk Restaurant')
+            setMenuItems(fallbackItems)
+            setMenuCategories(fallbackCategories)
+            setActiveCategory(fallbackCategories[0]?.id || '')
+            setLoading(false)
+          }
         }
-      } catch (err) {
-        console.error('CustomerMenu load error:', err)
-        if (!cancelled) {
-          setRestaurant('DaawatDesk Restaurant')
-          setMenuItems(fallbackItems)
-          setMenuCategories(fallbackCategories)
-          setActiveCategory(fallbackCategories[0]?.id || '')
-        }
-      }
-      if (!cancelled) setLoading(false)
+      )
     }
 
-    loadMenuData()
-    return () => { cancelled = true }
+    return () => { cancelled = true; if (unsub) unsub() }
   }, [uid])
 
   const filteredItems = useMemo(() => {
@@ -696,8 +700,9 @@ export default function CustomerMenu() {
                   type="text"
                   autoFocus
                   value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Enter your name"
+                  onChange={(e) => setCustomerName(e.target.value.slice(0, 15))}
+                  maxLength={15}
+                  placeholder="Enter your name (max 15 letters)"
                   required
                   className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
                 />
@@ -770,14 +775,29 @@ export default function CustomerMenu() {
                 <button
                   onClick={callWaiter}
                   disabled={waiterSending}
-                  className={`p-2.5 rounded-xl text-xs font-bold transition-all duration-200 shadow-sm flex items-center gap-1.5 ${waiterSent
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-primary-light hover:bg-primary-light/80 text-primary border border-primary/20'
-                    } disabled:opacity-50`}
+                  className={`group relative flex items-center gap-2 rounded-xl text-xs font-bold transition-all duration-200 px-3.5 py-2 overflow-hidden ${
+                    waiterSent
+                      ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
+                      : 'glass-pill'
+                  } disabled:opacity-60`}
                   title="Call Waiter"
                 >
-                  <span className="text-base">🔔</span>
-                  <span className="hidden sm:inline">{waiterSent ? 'Notified' : 'Waiter'}</span>
+                  <span className="shine-layer" aria-hidden="true" />
+                  <span className="relative z-10">
+                    {waiterSending ? (
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                    ) : waiterSent ? (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                    ) : (
+                      <svg className="w-4 h-4 waiter-glow text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                    )}
+                  </span>
+                  <span className="relative z-10">
+                    {waiterSending ? 'Sending...' : waiterSent ? 'Notified' : 'Waiter'}
+                  </span>
+                  {!waiterSent && !waiterSending && (
+                    <span className="absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                  )}
                 </button>
 
                 <button
@@ -848,9 +868,10 @@ export default function CustomerMenu() {
                   <button
                     key={cat.id}
                     onClick={() => { setActiveCategory(cat.id); setSearchQuery('') }}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 ${activeCategory === cat.id
-                      ? 'bg-primary text-white shadow-md shadow-primary/25'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 ${
+                      activeCategory === cat.id
+                        ? 'bg-primary text-white shadow-md shadow-primary/25'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                   >
                     {cat.name}
@@ -885,68 +906,69 @@ export default function CustomerMenu() {
                     </span>
                   </div>
                 )}
-                <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
                   {items.map((item) => {
                     const qty = getCartQty(item)
                     return (
                       <div
                         key={item.id}
-                        className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm hover:shadow-md transition-all duration-200 flex items-center justify-between gap-3 group"
+                        className="glass rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-lg hover:border-primary/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden flex flex-col group"
                       >
-                        {/* Item Info: Title & Price separated */}
+                        {/* Dish Photo */}
+                        <div className="relative w-full h-24 overflow-hidden bg-slate-100 border-b border-slate-200/60">
+                          <DishImage
+                            itemName={item.name}
+                            categoryId={item.category}
+                            customImage={item.image}
+                            alt={item.name}
+                            loading="lazy"
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                          />
+                          {/* Veg / Non-Veg Tag on photo */}
+                          <div className={`absolute top-1.5 left-1.5 w-3.5 h-3.5 rounded-xs border-[1.5px] ${item.veg ? 'border-emerald-500' : 'border-rose-500'} flex items-center justify-center bg-white/95 shadow-sm`}>
+                            {item.veg ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            ) : (
+                              <svg className="w-2 h-2 fill-rose-500" viewBox="0 0 12 12">
+                                <polygon points="6,1 11,10 1,10" />
+                              </svg>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Item Details */}
                         <div
                           onClick={() => setSelectedDetailItem(item)}
-                          className="flex-1 min-w-0 cursor-pointer"
+                          className="p-2.5 flex-1 cursor-pointer"
                         >
-                          <div className="flex items-center gap-2 mb-1.5">
-                            {/* Standard Veg / Non-Veg Red Triangle Symbol */}
-                            {item.veg ? (
-                              <span className="w-4 h-4 rounded-[3px] border-[1.5px] border-emerald-600 flex items-center justify-center flex-shrink-0 bg-white" title="Pure Veg">
-                                <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
-                              </span>
-                            ) : (
-                              <span className="w-4 h-4 rounded-[3px] border-[1.5px] border-rose-600 flex items-center justify-center flex-shrink-0 bg-white" title="Non-Veg">
-                                <svg className="w-2.5 h-2.5 fill-rose-600" viewBox="0 0 12 12">
-                                  <polygon points="6,1 11,10 1,10" />
-                                </svg>
-                              </span>
-                            )}
-
-                            {/* Dish Title - Bold Dark Slate */}
-                            <h4 className="text-base font-bold text-slate-900 group-hover:text-primary transition-colors truncate">
-                              {item.name}
-                            </h4>
-                          </div>
-
-                          {/* Price & Tag - Soft Gray Price */}
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-sm font-semibold text-slate-600">
-                              ₹{item.price}
-                            </span>
-                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1 hover:bg-amber-100">
-                              <span>ℹ️</span> Details & Ingredients
+                          <h4 className="text-sm font-bold text-slate-900 group-hover:text-primary transition-colors leading-snug line-clamp-2">
+                            {item.name}
+                          </h4>
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <span className="text-sm font-extrabold text-slate-900 tabular-nums">
+                              ₹{Number(item.price).toFixed(2)}
                             </span>
                           </div>
                         </div>
 
-                        {/* Add / Stepper Button - Solid High Contrast Theme Color */}
-                        <div className="flex-shrink-0">
+                        {/* Add / Stepper Button */}
+                        <div className="px-2.5 pb-2.5">
                           {qty === 0 ? (
                             <button
                               onClick={() => addToCart(item)}
-                              className="px-4 py-2 bg-primary hover:bg-primary-dark text-white font-bold text-xs rounded-xl shadow-md shadow-primary/25 active:scale-95 transition-all flex items-center gap-1 border border-primary-dark"
+                              className="w-full py-1.5 bg-primary hover:bg-primary-dark text-white font-bold text-xs rounded-lg shadow-md shadow-primary/20 active:scale-95 transition-all flex items-center justify-center gap-1 border border-primary-dark"
                             >
                               <span>+ ADD</span>
                             </button>
                           ) : (
-                            <div className="flex items-center bg-primary text-white rounded-xl shadow-md shadow-primary/25 overflow-hidden border border-primary-dark h-9">
+                            <div className="flex items-center bg-primary text-white rounded-lg shadow-md shadow-primary/25 overflow-hidden border border-primary-dark h-8">
                               <button
                                 onClick={() => removeFromCart(item)}
                                 className="w-8 h-full flex items-center justify-center font-black text-sm hover:bg-primary-dark text-white transition-colors"
                               >
                                 −
                               </button>
-                              <span className="text-xs font-black px-2 text-center min-w-[22px] text-white">
+                              <span className="text-xs font-black px-2 text-center flex-1 text-white tabular-nums">
                                 {qty}
                               </span>
                               <button
@@ -1023,10 +1045,10 @@ export default function CustomerMenu() {
                 ))}
               </div>
               <div className="border-t border-gray-100 p-4 space-y-3">
-                <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>₹{cartTotal.toFixed(2)}</span></div>
-                <div className="flex justify-between text-sm text-gray-600"><span>CGST (2.5%)</span><span>₹{cgstAmount.toFixed(2)}</span></div>
-                <div className="flex justify-between text-sm text-gray-600"><span>SGST (2.5%)</span><span>₹{sgstAmount.toFixed(2)}</span></div>
-                <div className="flex justify-between text-base font-bold text-gray-800"><span>Total</span><span>₹{grandTotal.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span className="tabular-nums">₹{cartTotal.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-gray-600"><span>CGST (2.5%)</span><span className="tabular-nums">₹{cgstAmount.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-gray-600"><span>SGST (2.5%)</span><span className="tabular-nums">₹{sgstAmount.toFixed(2)}</span></div>
+                <div className="flex justify-between text-base font-bold text-gray-800"><span>Total</span><span className="tabular-nums text-primary">₹{grandTotal.toFixed(2)}</span></div>
                 <button
                   onClick={() => { setShowCart(false); placeOrder() }}
                   disabled={placing}
@@ -1047,22 +1069,23 @@ export default function CustomerMenu() {
         )}
 
         {showPlacedOrders && (
-          <div className="fixed inset-0 bg-black/50 z-[60] flex items-end sm:items-center justify-center">
-            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col animate-fade-up">
-              <div className="flex items-center justify-between p-4 border-b border-gray-100">
-                <h3 className="text-lg font-bold text-gray-800">My Orders</h3>
-                <button onClick={() => setShowPlacedOrders(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500">✕</button>
+          <div className="fixed inset-0 modal-backdrop z-[60] flex items-end sm:items-center justify-center">
+            <div className="modal-card w-full max-w-lg max-h-[85vh] flex flex-col sm:rounded-2xl rounded-t-2xl">
+              <div className="accent-line" />
+              <div className="modal-header flex items-center justify-between p-4">
+                <h3 className="modal-title text-lg">My Orders</h3>
+                <button onClick={() => setShowPlacedOrders(false)} className="modal-close">✕</button>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 premium-scroll">
                 {placedOrders.length === 0 ? (
                   <div className="text-center py-12 text-gray-400">
                     <p className="text-sm">No orders placed yet</p>
                   </div>
                 ) : (
                   placedOrders.map((order) => (
-                    <div key={order.firestoreId || order.id} className="border border-gray-100 rounded-xl p-4">
+                    <div key={order.firestoreId || order.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/50">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold text-gray-400">{order.time}</span>
+                        <span className="text-xs font-semibold text-gray-400 tabular-nums">{order.time}</span>
                       </div>
                       <div className="space-y-1.5 mb-3">
                         {order.items.map((item, idx) => (
@@ -1071,18 +1094,18 @@ export default function CustomerMenu() {
                               <span className={`w-2.5 h-2.5 rounded-sm border flex-shrink-0 ${item.veg ? 'border-green' : 'border-red-500'}`}>
                                 <span className={`block w-1 h-1 mx-auto mt-[1px] ${item.veg ? 'bg-green rounded-full' : 'bg-red-500'}`} style={!item.veg ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } : {}}></span>
                               </span>
-                              <span className="text-gray-800">{item.name}</span>
-                              <span className="text-gray-400">×{item.qty}</span>
+                              <span className="text-gray-800 font-medium">{item.name}</span>
+                              <span className="text-gray-400 text-xs tabular-nums">×{item.qty}</span>
                             </div>
-                            <span className="font-semibold text-gray-800">₹{item.price * item.qty}</span>
+                            <span className="font-semibold text-gray-800 tabular-nums">₹{(item.price * item.qty).toFixed(2)}</span>
                           </div>
                         ))}
                       </div>
-                      <div className="border-t border-gray-50 pt-2 space-y-1 text-sm">
-                        <div className="flex justify-between text-gray-500"><span>Subtotal</span><span>₹{order.subtotal?.toFixed(2)}</span></div>
-                        <div className="flex justify-between text-gray-500"><span>CGST (2.5%)</span><span>₹{(order.gst / 2)?.toFixed(2)}</span></div>
-                        <div className="flex justify-between text-gray-500"><span>SGST (2.5%)</span><span>₹{(order.gst / 2)?.toFixed(2)}</span></div>
-                        <div className="flex justify-between font-bold text-gray-800 text-base"><span>Total</span><span>₹{order.total?.toFixed(2)}</span></div>
+                      <div className="border-t border-gray-100 pt-2 space-y-1 text-sm">
+                        <div className="flex justify-between text-gray-500"><span>Subtotal</span><span className="tabular-nums">₹{order.subtotal?.toFixed(2)}</span></div>
+                        <div className="flex justify-between text-gray-500"><span>CGST (2.5%)</span><span className="tabular-nums">₹{(order.gst / 2)?.toFixed(2)}</span></div>
+                        <div className="flex justify-between text-gray-500"><span>SGST (2.5%)</span><span className="tabular-nums">₹{(order.gst / 2)?.toFixed(2)}</span></div>
+                        <div className="flex justify-between font-bold text-gray-800 text-base"><span>Total</span><span className="tabular-nums text-primary">₹{order.total?.toFixed(2)}</span></div>
                       </div>
                       {order.paid ? (
                         <div className="flex gap-2 mt-3">

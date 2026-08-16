@@ -44,6 +44,7 @@ const Expenses = lazy(() => import('./components/Expenses'))
 const Suppliers = lazy(() => import('./components/Suppliers'))
 const Reservations = lazy(() => import('./components/Reservations'))
 const FeedbackPage = lazy(() => import('./components/Feedback'))
+const BuyLicense = lazy(() => import('./components/BuyLicense'))
 
 function ProtectedRoute({ children }) {
   const { currentUser, userProfile, profileFetched, loading } = useAuth()
@@ -155,6 +156,7 @@ function App() {
             <Route path="/menu" element={<CustomerMenu />} />
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/buy-license" element={<BuyLicense />} />
             <Route path="/register" element={<Register />} />
             <Route
               path="/dashboard"

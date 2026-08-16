@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { validateKey, isLicenseValid } from '../utils/license'
+import { isLicenseValid } from '../utils/license'
 import { db } from '../firebase'
 import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { Mail, Lock, Eye, EyeOff, User, Store, UserPlus, Key, X } from 'lucide-react'
@@ -30,13 +30,11 @@ export default function Register() {
 
     const normalizedEmail = email.trim().toLowerCase()
 
-    let keyVersion = 1
     try {
       const q = query(collection(db, 'users'), where('email', '==', normalizedEmail))
       const snap = await getDocs(q)
       if (!snap.empty) {
         const existingUser = snap.docs[0].data()
-        keyVersion = existingUser.keyVersion || 1
         if (existingUser.keyRevoked) {
           setError('Your license key has been revoked by the administrator. Please contact your administrator to obtain a new license key.')
           return
@@ -50,7 +48,16 @@ export default function Register() {
       console.error('Error checking existing user:', err)
     }
 
-    if (!validateKey(normalizedEmail, licenseKey.trim(), keyVersion)) {
+    const keyOk = await fetch('/api/validate-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: normalizedEmail, key: licenseKey }),
+    }).then((res) => res.json()).then((data) => Boolean(data && data.valid)).catch(() => null)
+    if (keyOk === null) {
+      setError('Unable to verify your license key right now. Check your network connection and try again.')
+      return
+    }
+    if (!keyOk) {
       setError('The license key you entered is invalid or does not match your email. Please check and try again.')
       return
     }
@@ -189,10 +196,11 @@ export default function Register() {
             )}
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Your Name</label>
+              <label htmlFor="register-name" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Your Name</label>
               <div className="relative">
                 <User className="w-[18px] h-[18px] text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
+                  id="register-name"
                   type="text"
                   required
                   value={name}
@@ -204,10 +212,11 @@ export default function Register() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Restaurant Name</label>
+              <label htmlFor="register-restaurant" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Restaurant Name</label>
               <div className="relative">
                 <Store className="w-[18px] h-[18px] text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
+                  id="register-restaurant"
                   type="text"
                   required
                   value={restaurant}
@@ -219,10 +228,11 @@ export default function Register() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Email Address</label>
+              <label htmlFor="register-email" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Email Address</label>
               <div className="relative">
                 <Mail className="w-[18px] h-[18px] text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
+                  id="register-email"
                   type="email"
                   required
                   value={email}
@@ -234,10 +244,11 @@ export default function Register() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">License Key</label>
+              <label htmlFor="register-licenseKey" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">License Key</label>
               <div className="relative">
                 <Key className="w-[18px] h-[18px] text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
+                  id="register-licenseKey"
                   type="text"
                   required
                   value={licenseKey}
@@ -246,14 +257,20 @@ export default function Register() {
                   placeholder="DAW-XXXX-XXXX-XXXX"
                 />
               </div>
-              <p className="text-[11px] text-gray-400 mt-1.5">Contact your administrator for a license key.</p>
+              <p className="text-[11px] text-gray-500 mt-1.5">
+                Don't have a key?{' '}
+                <Link to="/buy-license" className="text-[#C83E00] font-semibold hover:text-[#9E2E00] transition-colors">
+                  Buy License
+                </Link>
+              </p>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
+              <label htmlFor="register-password" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
               <div className="relative">
                 <Lock className="w-[18px] h-[18px] text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
+                  id="register-password"
                   type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
@@ -272,10 +289,11 @@ export default function Register() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Confirm Password</label>
+              <label htmlFor="register-confirm" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Confirm Password</label>
               <div className="relative">
                 <Lock className="w-[18px] h-[18px] text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
+                  id="register-confirm"
                   type={showPassword ? 'text' : 'password'}
                   required
                   value={confirmPassword}
@@ -312,7 +330,7 @@ export default function Register() {
           </div>
         </div>
 
-        <p className="text-center text-xs text-gray-400 mt-6">
+        <p className="text-center text-xs text-gray-500 mt-6">
           <Link to="/" className="hover:text-white/60 transition-colors">← Back to Home</Link>
         </p>
         </div>

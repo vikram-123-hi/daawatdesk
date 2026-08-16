@@ -1,15 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { generateKey, isLicenseValid } from '../utils/license'
 import { db } from '../firebase'
-import { collection, getDocs, updateDoc, doc, deleteDoc, query, where } from 'firebase/firestore'
+import { collection, getDocs, updateDoc, doc, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore'
 import {
   ArrowLeft, Shield, Key, Users, Copy, Check, RefreshCw,
   Search, Clock, AlertTriangle, CheckCircle, XCircle, LogOut,
   LayoutDashboard, Settings, UserPlus, Send, Trash2, ChevronDown,
   Calendar, TrendingUp, Activity, Mail, Store, Eye, EyeOff,
-  Download, Filter, MoreVertical, Phone, Globe
+  Download, Filter, MoreVertical, Phone, Globe, BadgeCheck
 } from 'lucide-react'
 
 const ADMIN_EMAIL = 'swainvikramaditya99@gmail.com'
@@ -35,6 +35,10 @@ export default function Admin() {
   const [deletingUserId, setDeletingUserId] = useState(null)
   const [deleteError, setDeleteError] = useState('')
   const [keyNote, setKeyNote] = useState('')
+  const [licenses, setLicenses] = useState([])
+  const [loadingLicenses, setLoadingLicenses] = useState(false)
+  const [adminLicensesError, setAdminLicensesError] = useState('')
+  const [copiedLicense, setCopiedLicense] = useState(null)
 
   const isAdmin = currentUser?.email === ADMIN_EMAIL
 
@@ -60,6 +64,25 @@ export default function Admin() {
   useEffect(() => {
     if (isAdmin) fetchUsers()
   }, [isAdmin])
+
+  useEffect(() => {
+    if (isAdmin && (activeTab === 'licenses' || activeTab === 'users')) fetchLicenses()
+  }, [isAdmin, activeTab])
+
+  async function fetchLicenses() {
+    setLoadingLicenses(true)
+    setAdminLicensesError('')
+    try {
+      const snap = await getDocs(query(collection(db, 'licenses'), orderBy('generatedAt', 'desc'), limit(100)))
+      const list = []
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }))
+      setLicenses(list)
+    } catch (err) {
+      console.error('Error fetching licenses:', err)
+      setAdminLicensesError('Failed to load licenses. Please check your connection and try again.')
+    }
+    setLoadingLicenses(false)
+  }
 
   async function fetchUsers() {
     setLoadingUsers(true)
@@ -199,9 +222,24 @@ export default function Admin() {
     return matchSearch
   })
 
+  const licenseByEmail = useMemo(() => {
+    const map = {}
+    for (const lic of licenses) {
+      const em = (lic.email || '').toLowerCase()
+      if (em && !map[em]) map[em] = lic
+    }
+    return map
+  }, [licenses])
+
+  function displayKeyFor(user) {
+    const stored = licenseByEmail[(user.email || '').toLowerCase()]
+    return stored?.key || generateKey(user.email, user.keyVersion || 1)
+  }
+
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'generate', label: 'Generate Key', icon: Key },
+    { id: 'licenses', label: 'Licenses', icon: BadgeCheck, badge: licenses.length },
     { id: 'users', label: 'Users', icon: Users, badge: totalUsers },
     { id: 'settings', label: 'Settings', icon: Settings },
   ]
@@ -532,6 +570,126 @@ export default function Admin() {
             </div>
           )}
 
+          {/* ═══════ LICENSES ═══════ */}
+          {activeTab === 'licenses' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-secondary mb-1 hidden sm:block">Issued Licenses</h2>
+                  <p className="text-sm text-gray-500 hidden sm:block">Self-serve purchases from the buy-license store</p>
+                </div>
+                <button onClick={fetchLicenses} className="flex items-center gap-2 text-sm text-gray-500 hover:text-secondary transition-colors bg-white px-4 py-2 rounded-xl border border-gray-200">
+                  <RefreshCw className={`w-4 h-4 ${loadingLicenses ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                {adminLicensesError ? (
+                  <div className="flex items-center justify-between gap-4 px-5 py-8">
+                    <div className="flex items-center gap-3 text-red-600 text-sm">
+                      <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+                      {adminLicensesError}
+                    </div>
+                    <button
+                      onClick={() => fetchLicenses()}
+                      className="flex-shrink-0 flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Retry
+                    </button>
+                  </div>
+                ) : loadingLicenses ? (
+                  <div className="flex items-center justify-center py-16 text-gray-400">
+                    <RefreshCw className="w-6 h-6 animate-spin mr-2" />
+                    Loading licenses...
+                  </div>
+                ) : licenses.length === 0 ? (
+                  <div className="text-center py-16 text-gray-400">
+                    <BadgeCheck className="w-16 h-16 mx-auto mb-3 opacity-30" />
+                    <p className="font-medium">No licenses issued yet</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-left py-3 px-5 font-semibold text-gray-600">User</th>
+                          <th className="text-left py-3 px-5 font-semibold text-gray-600">License Key</th>
+                          <th className="text-left py-3 px-5 font-semibold text-gray-600">Plan</th>
+                          <th className="text-left py-3 px-5 font-semibold text-gray-600">Amount</th>
+                          <th className="text-left py-3 px-5 font-semibold text-gray-600">Status</th>
+                          <th className="text-left py-3 px-5 font-semibold text-gray-600">Generated</th>
+                          <th className="text-left py-3 px-5 font-semibold text-gray-600">Expires</th>
+                          <th className="text-left py-3 px-5 font-semibold text-gray-600">Payment ID</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {licenses.map((lic) => {
+                          const matchedUser = users.find((u) => (u.email || '').toLowerCase() === (lic.email || '').toLowerCase())
+                          const isExpired = lic.expiresAt ? new Date(lic.expiresAt) <= new Date() : false
+                          return (
+                            <tr key={lic.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                              <td className="py-3 px-5">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
+                                    <span className="text-sm font-bold text-primary">{((lic.name || lic.email || '?')[0] || '?').toUpperCase()}</span>
+                                  </div>
+                                  <div>
+                                    <p className="font-medium text-secondary">{lic.name || matchedUser?.name || '-'}</p>
+                                    <p className="text-xs text-gray-400">{lic.email}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3 px-5">
+                                <button
+                                  onClick={() => { navigator.clipboard.writeText(lic.key); setCopiedLicense(lic.id); setTimeout(() => setCopiedLicense(null), 2000) }}
+                                  className="font-mono text-xs text-gray-500 hover:text-primary bg-gray-50 hover:bg-primary/5 px-2 py-1 rounded transition-colors flex items-center gap-1.5"
+                                  title="Click to copy"
+                                >
+                                  {lic.key}
+                                  {copiedLicense === lic.id ? <Check className="w-3 h-3 text-green" /> : <Copy className="w-3 h-3" />}
+                                </button>
+                              </td>
+                              <td className="py-3 px-5">
+                                <span className="text-xs font-semibold bg-orange-50 text-primary px-2 py-1 rounded-full capitalize">{lic.planKey || '-'}</span>
+                              </td>
+                              <td className="py-3 px-5 text-gray-500 tabular-nums">
+                                {lic.amount ? `₹${(lic.amount / 100).toLocaleString('en-IN')}` : '-'}
+                              </td>
+                              <td className="py-3 px-5">
+                                {isExpired ? (
+                                  <span className="inline-flex items-center gap-1.5 text-red-500 text-xs font-semibold bg-red-50 px-2.5 py-1 rounded-full">
+                                    <XCircle className="w-3 h-3" />
+                                    Expired
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 text-green text-xs font-semibold bg-green/10 px-2.5 py-1 rounded-full">
+                                    <CheckCircle className="w-3 h-3" />
+                                    Active
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-5 text-gray-500 text-xs">
+                                {lic.generatedAt ? new Date(lic.generatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                              </td>
+                              <td className="py-3 px-5 text-gray-500 text-xs">
+                                {lic.expiresAt ? new Date(lic.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                              </td>
+                              <td className="py-3 px-5">
+                                <span className="font-mono text-xs text-gray-400">{lic.paymentId ? lic.paymentId.slice(0, 8) : '-'}</span>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* ═══════ USERS ═══════ */}
           {activeTab === 'users' && (
             <div className="space-y-6">
@@ -620,11 +778,11 @@ export default function Admin() {
                               </td>
                               <td className="py-3 px-5">
                                 <button
-                                  onClick={() => { navigator.clipboard.writeText(generateKey(user.email, user.keyVersion || 1)); setCopiedIndex(user.id); setTimeout(() => setCopiedIndex(null), 2000) }}
+                                  onClick={() => { navigator.clipboard.writeText(displayKeyFor(user)); setCopiedIndex(user.id); setTimeout(() => setCopiedIndex(null), 2000) }}
                                   className="font-mono text-xs text-gray-500 hover:text-primary bg-gray-50 hover:bg-primary/5 px-2 py-1 rounded transition-colors flex items-center gap-1.5"
                                   title="Click to copy"
                                 >
-                                  {generateKey(user.email, user.keyVersion || 1)}
+                                  {displayKeyFor(user)}
                                   {copiedIndex === user.id ? <Check className="w-3 h-3 text-green" /> : <Copy className="w-3 h-3" />}
                                 </button>
                               </td>
@@ -818,11 +976,11 @@ export default function Admin() {
                 <div className="flex justify-between text-sm items-center">
                   <span className="text-gray-500">License Key</span>
                   <button
-                    onClick={() => { navigator.clipboard.writeText(generateKey(selectedUser.email, selectedUser.keyVersion || 1)); setCopiedIndex('modal'); setTimeout(() => setCopiedIndex(null), 2000) }}
+                    onClick={() => { navigator.clipboard.writeText(displayKeyFor(selectedUser)); setCopiedIndex('modal'); setTimeout(() => setCopiedIndex(null), 2000) }}
                     className="font-mono text-xs text-gray-500 hover:text-primary bg-white hover:bg-primary/5 px-2 py-1 rounded transition-colors flex items-center gap-1.5"
                     title="Click to copy"
                   >
-                    {generateKey(selectedUser.email, selectedUser.keyVersion || 1)}
+                    {displayKeyFor(selectedUser)}
                     {copiedIndex === 'modal' ? <Check className="w-3 h-3 text-green" /> : <Copy className="w-3 h-3" />}
                   </button>
                 </div>

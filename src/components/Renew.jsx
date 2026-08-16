@@ -1,7 +1,6 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { validateKey } from '../utils/license'
 import { db } from '../firebase'
 import { doc, updateDoc, getDoc } from 'firebase/firestore'
 import { RefreshCw, Key, CheckCircle, ArrowLeft, LogOut } from 'lucide-react'
@@ -32,7 +31,6 @@ export default function Renew() {
     try {
       const userDoc = await getDoc(doc(db, 'users', currentUser.uid))
       const userData = userDoc.data()
-      const keyVersion = userDoc.exists() ? (userData?.keyVersion || 1) : 1
 
       if (userData?.keyRevoked) {
         setError('Your license key has been revoked by the administrator. Please contact your administrator to obtain a new license key.')
@@ -40,7 +38,17 @@ export default function Renew() {
         return
       }
 
-      if (!validateKey(currentUser.email, licenseKey.trim(), keyVersion)) {
+      const keyOk = await fetch('/api/validate-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: currentUser.email, key: licenseKey }),
+      }).then((res) => res.json()).then((data) => Boolean(data && data.valid)).catch(() => null)
+      if (keyOk === null) {
+        setError('Unable to verify your license key right now. Check your network connection and try again.')
+        setLoading(false)
+        return
+      }
+      if (!keyOk) {
         setError('The license key you entered is invalid or does not match your email. Please check and try again.')
         setLoading(false)
         return
@@ -100,7 +108,7 @@ export default function Renew() {
         <div className="bg-white rounded-3xl shadow-xl p-8 border border-border">
           {userProfile && (
             <div className="bg-gray-50 rounded-xl p-4 mb-6">
-              <p className="text-xs text-gray-400 mb-1">Renewing for</p>
+              <p className="text-xs text-gray-500 mb-1">Renewing for</p>
               <p className="font-semibold text-secondary">{userProfile.name}</p>
               <p className="text-sm text-gray-500">{currentUser?.email}</p>
               {userProfile.restaurant && (
@@ -117,10 +125,11 @@ export default function Renew() {
             )}
 
             <div>
-              <label className="block text-sm font-medium text-text-secondary mb-1.5">New License Key</label>
+              <label htmlFor="renew-licenseKey" className="block text-sm font-medium text-text-secondary mb-1.5">New License Key</label>
               <div className="relative">
                 <Key className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
+                  id="renew-licenseKey"
                   type="text"
                   required
                   value={licenseKey}
@@ -129,7 +138,12 @@ export default function Renew() {
                   placeholder="DAW-XXXX-XXXX-XXXX"
                 />
               </div>
-              <p className="text-xs text-gray-400 mt-1">Contact the administrator to obtain a renewal key.</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Need a new license?{' '}
+                <Link to="/buy-license" className="text-[#C83E00] font-semibold hover:text-[#9E2E00] transition-colors">
+                  Purchase License
+                </Link>
+              </p>
             </div>
 
             <button
