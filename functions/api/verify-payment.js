@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { PLANS } from '../_lib/plans.js'
-import { getFirebaseAdmin } from '../_lib/firebaseAdmin.js'
+import { getFirestore } from '../_lib/firestore.js'
 import { json, handleOptions } from '../_lib/response.js'
 
 function generateKey() {
@@ -125,7 +125,7 @@ export async function onRequest(context) {
 
   let db
   try {
-    db = await getFirebaseAdmin()
+    db = await getFirestore()
   } catch (err) {
     console.error('Verify payment init error:', err)
     return json({ error: 'Failed to initialize payment store' }, 500)

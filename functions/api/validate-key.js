@@ -1,4 +1,4 @@
-import { getFirebaseAdmin } from '../_lib/firebaseAdmin.js'
+import { getFirestore } from '../_lib/firestore.js'
 import { json, handleOptions } from '../_lib/response.js'
 
 function isEmail(value) {
@@ -40,7 +40,7 @@ export async function onRequest(context) {
   }
 
   try {
-    const db = await getFirebaseAdmin()
+    const db = await getFirestore()
     const snap = await db.collection('licenses').where('email', '==', email).limit(50).get()
 
     let matched = null

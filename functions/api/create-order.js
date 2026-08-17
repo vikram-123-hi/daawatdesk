@@ -1,6 +1,6 @@
 import { PLANS } from '../_lib/plans.js'
 import { json, handleOptions } from '../_lib/response.js'
-import { getFirebaseAdmin } from '../_lib/firebaseAdmin.js'
+import { getFirestore } from '../_lib/firestore.js'
 
 function readKeyId(env) {
   return env.RAZORPAY_KEY_ID || env.VITE_RAZORPAY_KEY_ID || ''
@@ -74,7 +74,7 @@ export async function onRequest(context) {
   }
 
   try {
-    const db = await getFirebaseAdmin()
+    const db = await getFirestore()
     await db.collection('orders').doc(order.id).set({
       planKey,
       amount: plan.amount,
